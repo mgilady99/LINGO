@@ -1,20 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import {
-  Mic,
-  MicOff,
-  Headphones,
-  LogOut,
-  MessageSquare,
-  AlertCircle,
-  Settings,
-  X,
-  Accessibility,
-  Minus,
-  Plus,
-  Contrast,
-  MousePointer2,
-} from 'lucide-react';
+import { Mic, MicOff, Headphones, LogOut, AlertCircle, Settings, X, Accessibility, Minus, Plus, Contrast, MousePointer2 } from 'lucide-react';
 import {
   ConnectionStatus,
   SUPPORTED_LANGUAGES,
@@ -27,7 +13,6 @@ import {
 import { decode, decodeAudioData, createPcmBlob } from './services/audioservice';
 
 import Avatar from './components/avatar';
-import TranscriptItem from './components/transcriptitem';
 import AudioVisualizer from './components/audiovisualizer';
 
 type A11yPrefs = {
@@ -47,7 +32,11 @@ const App: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
+
+  // ✅ We keep transcript state but do NOT render it (so nothing pushes UI down)
   const [transcript, setTranscript] = useState<TranscriptionEntry[]>([]);
+  const currentInputTranscriptionRef = useRef('');
+  const currentOutputTranscriptionRef = useRef('');
 
   // Settings + Accessibility
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -63,11 +52,7 @@ const App: React.FC = () => {
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const activeSessionRef = useRef<any>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
-
-  const currentInputTranscriptionRef = useRef('');
-  const currentOutputTranscriptionRef = useRef('');
 
   const isMutedRef = useRef(isMuted);
   useEffect(() => {
@@ -89,16 +74,6 @@ const App: React.FC = () => {
     } catch {}
   }, [a11y]);
 
-  // Apply reduce motion to document (nice touch for animations)
-  useEffect(() => {
-    if (a11y.reduceMotion) {
-      document.documentElement.classList.add('motion-reduce');
-    } else {
-      document.documentElement.classList.remove('motion-reduce');
-    }
-  }, [a11y.reduceMotion]);
-
-  // ESC closes settings
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setIsSettingsOpen(false);
@@ -106,13 +81,6 @@ const App: React.FC = () => {
     if (isSettingsOpen) window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isSettingsOpen]);
-
-  // Auto-scroll transcript (only transcript area)
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [transcript]);
 
   const stopConversation = useCallback(() => {
     if (activeSessionRef.current) {
@@ -146,7 +114,6 @@ const App: React.FC = () => {
   }, [stopConversation]);
 
   const startConversation = async () => {
-    // Vite: only VITE_* env vars are exposed to the client bundle
     const apiKey = (import.meta as any).env?.VITE_API_KEY || (import.meta as any).env?.API_KEY;
 
     if (!apiKey) {
@@ -167,7 +134,7 @@ const App: React.FC = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
 
-      const outputCtx = outputAudioContextRef.current;
+      const outputCtx = outputAudioContextRef.current!;
       const outputNode = outputCtx.createGain();
       outputNode.connect(outputCtx.destination);
 
@@ -212,6 +179,7 @@ const App: React.FC = () => {
               setIsSpeaking(false);
             }
 
+            // ✅ keep collecting transcriptions (optional) but not shown
             if (m.serverContent?.inputTranscription) {
               currentInputTranscriptionRef.current += m.serverContent.inputTranscription.text;
             }
@@ -287,214 +255,180 @@ const App: React.FC = () => {
     }
   };
 
-  const fontScaleStyle: React.CSSProperties = {
-    fontSize: `${a11y.fontScale * 100}%`,
-  };
+  const fontScaleStyle: React.CSSProperties = { fontSize: `${a11y.fontScale * 100}%` };
 
   const rootClasses = [
-    'min-h-screen',
+    'h-dvh',
+    'w-dvw',
     'bg-slate-950',
-    'flex',
-    'flex-col',
-    'md:flex-row',
     'text-slate-200',
     'overflow-hidden',
     a11y.highContrast ? 'contrast-125 saturate-125' : '',
-    a11y.focusRing ? '' : 'focus:outline-none',
   ]
     .filter(Boolean)
     .join(' ');
 
-  const incFont = () => {
-    setA11y((p) => ({ ...p, fontScale: p.fontScale === 1 ? 1.15 : p.fontScale === 1.15 ? 1.3 : 1.3 }));
-  };
-  const decFont = () => {
-    setA11y((p) => ({ ...p, fontScale: p.fontScale === 1.3 ? 1.15 : p.fontScale === 1.15 ? 1 : 1 }));
-  };
+  const incFont = () => setA11y((p) => ({ ...p, fontScale: p.fontScale === 1 ? 1.15 : p.fontScale === 1.15 ? 1.3 : 1.3 }));
+  const decFont = () => setA11y((p) => ({ ...p, fontScale: p.fontScale === 1.3 ? 1.15 : p.fontScale === 1.15 ? 1 : 1 }));
 
   return (
     <div className={rootClasses} style={fontScaleStyle}>
-      {/* Sidebar */}
-      <aside className="w-full md:w-80 bg-slate-900 border-r border-white/5 p-6 flex flex-col gap-6 z-20 overflow-y-auto">
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
-              <Headphones className="text-white" />
-            </div>
-            <h1 className="text-xl font-black">LingoLive</h1>
-          </div>
-
-          {/* Settings button */}
-          <button
-            onClick={() => setIsSettingsOpen(true)}
-            className="p-2 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800/60 transition"
-            aria-label="Open settings"
-            title="Settings"
-          >
-            <Settings size={18} />
-          </button>
-        </div>
-
-        <div className="space-y-4">
-          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Language Settings</label>
-          <div className="p-3 bg-slate-800/40 rounded-2xl border border-white/5 space-y-3">
-            <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 block ml-1">Learn</span>
-              <select
-                value={targetLang.code}
-                onChange={(e) => setTargetLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
-                disabled={status !== ConnectionStatus.DISCONNECTED}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
-                aria-label="Select learning language"
-              >
-                {SUPPORTED_LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.flag} {l.name}
-                  </option>
-                ))}
-              </select>
+      <div className="h-full w-full flex flex-col md:flex-row overflow-hidden">
+        {/* Sidebar - no transcript now */}
+        <aside className="w-full md:w-80 h-full bg-slate-900 border-r border-white/5 p-6 flex flex-col gap-6 z-20 overflow-hidden">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
+                <Headphones className="text-white" />
+              </div>
+              <h1 className="text-xl font-black">LingoLive</h1>
             </div>
 
-            <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 block ml-1">Native</span>
-              <select
-                value={nativeLang.code}
-                onChange={(e) => setNativeLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
-                disabled={status !== ConnectionStatus.DISCONNECTED}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
-                aria-label="Select native language"
-              >
-                {SUPPORTED_LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.flag} {l.name}
-                  </option>
-                ))}
-              </select>
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-2 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800/60 transition"
+              aria-label="Open settings"
+              title="Settings"
+            >
+              <Settings size={18} />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Language Settings</label>
+            <div className="p-3 bg-slate-800/40 rounded-2xl border border-white/5 space-y-3">
+              <div className="space-y-1">
+                <span className="text-[10px] text-slate-400 block ml-1">Learn</span>
+                <select
+                  value={targetLang.code}
+                  onChange={(e) => setTargetLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
+                  disabled={status !== ConnectionStatus.DISCONNECTED}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  {SUPPORTED_LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.flag} {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] text-slate-400 block ml-1">Native</span>
+                <select
+                  value={nativeLang.code}
+                  onChange={(e) => setNativeLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
+                  disabled={status !== ConnectionStatus.DISCONNECTED}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  {SUPPORTED_LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.flag} {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="space-y-4">
-          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Training Mode</label>
-          <div className="space-y-2">
-            {SCENARIOS.map((s) => (
-              <button
-                key={(s as any).id}
-                onClick={() => setSelectedScenario(s)}
-                disabled={status !== ConnectionStatus.DISCONNECTED}
-                className={`w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all ${
-                  (selectedScenario as any).id === (s as any).id
-                    ? 'bg-indigo-600/20 border-indigo-500'
-                    : 'bg-slate-800/40 border-transparent hover:bg-slate-800'
-                }`}
-              >
-                <span className="text-xl">{(s as any).icon}</span>
-                <div>
-                  <div className="font-bold text-xs">{(s as any).title}</div>
-                  <div className="text-[9px] text-slate-500">{(s as any).description}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex-1 flex flex-col mt-4 min-h-0">
-          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-            <MessageSquare size={12} /> Live Transcript
-          </label>
-
-          {/* IMPORTANT: only this area scrolls */}
-          <div
-            ref={scrollRef}
-            className="flex-1 overflow-y-auto space-y-1 pr-2 scroll-smooth scrollbar-thin scrollbar-thumb-slate-700"
-            aria-label="Live transcript"
-          >
-            {transcript.length === 0 ? (
-              <div className="text-[10px] text-slate-600 italic mt-4 text-center">Your conversation will appear here...</div>
-            ) : (
-              transcript.map((entry, i) => <TranscriptItem key={i} entry={entry} />)
-            )}
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Experience */}
-      <main className="flex-1 flex flex-col items-center justify-center p-8 relative overflow-hidden">
-        <div className="absolute top-8 right-8 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
-          <AudioVisualizer isActive={status === ConnectionStatus.CONNECTED && !isSpeaking && !isMuted} color="#10b981" />
-          <div
-            className={`w-2 h-2 rounded-full ${
-              status === ConnectionStatus.CONNECTED ? 'bg-green-500 animate-pulse' : 'bg-slate-700'
-            }`}
-          />
-          <span className="text-[10px] font-black tracking-widest uppercase">{status}</span>
-        </div>
-
-        <div className="flex-1 flex flex-col items-center justify-center gap-10 text-center w-full max-w-xl">
-          <Avatar
-            state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'}
-          />
-
-          <div className="space-y-2">
-            <h2 className="text-4xl font-black text-white tracking-tight">
-              {status === ConnectionStatus.CONNECTED
-                ? isSpeaking
-                  ? 'Gemini is speaking'
-                  : 'Listening...'
-                : (selectedScenario as any).title}
-            </h2>
-            <p className="text-slate-500 text-sm max-w-md mx-auto">{(selectedScenario as any).description}</p>
-          </div>
-
-          {(isSpeaking || (status === ConnectionStatus.CONNECTED && !isMuted)) && (
-            <div className="h-12 flex items-center justify-center">
-              <AudioVisualizer isActive={true} color={isSpeaking ? '#6366f1' : '#10b981'} />
-            </div>
-          )}
-        </div>
-
-        <div className="w-full max-w-md flex flex-col items-center gap-8 py-10">
-          {error && (
-            <div className="text-red-400 text-xs font-bold bg-red-400/10 px-4 py-2 rounded-lg border border-red-400/20 flex items-center gap-2">
-              <AlertCircle size={14} /> {error}
-            </div>
-          )}
-
-          <div className="flex items-center gap-6">
-            {status === ConnectionStatus.CONNECTED ? (
-              <>
+          <div className="space-y-4">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Training Mode</label>
+            <div className="space-y-2">
+              {SCENARIOS.map((s) => (
                 <button
-                  onClick={() => setIsMuted(!isMuted)}
-                  title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
-                  className={`p-6 rounded-full border-2 transition-all shadow-2xl ${
-                    isMuted ? 'bg-red-500 border-red-400' : 'bg-slate-800 border-slate-700 hover:border-indigo-500'
+                  key={(s as any).id}
+                  onClick={() => setSelectedScenario(s)}
+                  disabled={status !== ConnectionStatus.DISCONNECTED}
+                  className={`w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all ${
+                    (selectedScenario as any).id === (s as any).id
+                      ? 'bg-indigo-600/20 border-indigo-500'
+                      : 'bg-slate-800/40 border-transparent hover:bg-slate-800'
                   }`}
-                  aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
                 >
-                  {isMuted ? <MicOff /> : <Mic />}
+                  <span className="text-xl">{(s as any).icon}</span>
+                  <div>
+                    <div className="font-bold text-xs">{(s as any).title}</div>
+                    <div className="text-[9px] text-slate-500">{(s as any).description}</div>
+                  </div>
                 </button>
-
-                <button
-                  onClick={stopConversation}
-                  className="bg-red-600 px-12 py-6 rounded-2xl font-black flex items-center gap-3 hover:bg-red-700 transition-colors shadow-2xl shadow-red-900/20"
-                  aria-label="Exit"
-                >
-                  <LogOut /> EXIT
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={startConversation}
-                disabled={status === ConnectionStatus.CONNECTING}
-                className="bg-indigo-600 px-24 py-8 rounded-3xl font-black flex items-center gap-4 text-xl shadow-2xl shadow-indigo-900/40 hover:bg-indigo-500 transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                aria-label="Start"
-              >
-                <Mic size={32} /> {status === ConnectionStatus.CONNECTING ? 'CONNECTING...' : 'START'}
-              </button>
-            )}
+              ))}
+            </div>
           </div>
-        </div>
-      </main>
+
+          {/* Optional: keep sidebar balanced */}
+          <div className="flex-1" />
+        </aside>
+
+        {/* Main - fixed, never pushed by transcript */}
+        <main className="flex-1 h-full overflow-hidden flex flex-col">
+          <div className="relative flex-1 overflow-hidden flex items-center justify-center p-8">
+            <div className="absolute top-6 right-6 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
+              <AudioVisualizer isActive={status === ConnectionStatus.CONNECTED && !isSpeaking && !isMuted} color="#10b981" />
+              <div className={`w-2 h-2 rounded-full ${status === ConnectionStatus.CONNECTED ? 'bg-green-500 animate-pulse' : 'bg-slate-700'}`} />
+              <span className="text-[10px] font-black tracking-widest uppercase">{status}</span>
+            </div>
+
+            <div className="w-full max-w-xl flex flex-col items-center justify-center gap-10 text-center">
+              <Avatar state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'} />
+
+              <div className="space-y-2">
+                <h2 className="text-4xl font-black text-white tracking-tight">
+                  {status === ConnectionStatus.CONNECTED ? (isSpeaking ? 'Gemini is speaking' : 'Listening...') : (selectedScenario as any).title}
+                </h2>
+                <p className="text-slate-500 text-sm max-w-md mx-auto">{(selectedScenario as any).description}</p>
+              </div>
+
+              {(isSpeaking || (status === ConnectionStatus.CONNECTED && !isMuted)) && (
+                <div className="h-12 flex items-center justify-center">
+                  <AudioVisualizer isActive={true} color={isSpeaking ? '#6366f1' : '#10b981'} />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom controls always visible */}
+          <div className="w-full border-t border-white/5 bg-slate-950/60 backdrop-blur-sm px-6 py-6 flex items-center justify-center">
+            <div className="w-full max-w-md flex flex-col items-center gap-4">
+              {error && (
+                <div className="text-red-400 text-xs font-bold bg-red-400/10 px-4 py-2 rounded-lg border border-red-400/20 flex items-center gap-2">
+                  <AlertCircle size={14} /> {error}
+                </div>
+              )}
+
+              <div className="flex items-center gap-6">
+                {status === ConnectionStatus.CONNECTED ? (
+                  <>
+                    <button
+                      onClick={() => setIsMuted(!isMuted)}
+                      title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
+                      className={`p-5 rounded-full border-2 transition-all shadow-2xl ${
+                        isMuted ? 'bg-red-500 border-red-400' : 'bg-slate-800 border-slate-700 hover:border-indigo-500'
+                      }`}
+                    >
+                      {isMuted ? <MicOff /> : <Mic />}
+                    </button>
+
+                    <button
+                      onClick={stopConversation}
+                      className="bg-red-600 px-10 py-5 rounded-2xl font-black flex items-center gap-3 hover:bg-red-700 transition-colors shadow-2xl shadow-red-900/20"
+                    >
+                      <LogOut /> EXIT
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={startConversation}
+                    disabled={status === ConnectionStatus.CONNECTING}
+                    className="bg-indigo-600 px-20 py-6 rounded-3xl font-black flex items-center gap-4 text-xl shadow-2xl shadow-indigo-900/40 hover:bg-indigo-500 transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Mic size={30} /> {status === ConnectionStatus.CONNECTING ? 'CONNECTING...' : 'START'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
 
       {/* Settings Modal */}
       {isSettingsOpen && (
@@ -505,20 +439,13 @@ const App: React.FC = () => {
           aria-label="Settings"
           onClick={() => setIsSettingsOpen(false)}
         >
-          <div
-            className="w-full max-w-lg bg-slate-950 border border-white/10 rounded-2xl shadow-2xl p-5"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="w-full max-w-lg bg-slate-950 border border-white/10 rounded-2xl shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Accessibility />
                 <h3 className="text-lg font-black">Settings</h3>
               </div>
-              <button
-                className="p-2 rounded-xl hover:bg-white/5 border border-white/10"
-                onClick={() => setIsSettingsOpen(false)}
-                aria-label="Close settings"
-              >
+              <button className="p-2 rounded-xl hover:bg-white/5 border border-white/10" onClick={() => setIsSettingsOpen(false)} aria-label="Close settings">
                 <X size={18} />
               </button>
             </div>
@@ -533,21 +460,11 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div className="text-xs text-slate-300">Text size</div>
                   <div className="flex items-center gap-2">
-                    <button
-                      className="p-2 rounded-xl border border-white/10 hover:bg-white/5"
-                      onClick={decFont}
-                      aria-label="Decrease text size"
-                    >
+                    <button className="p-2 rounded-xl border border-white/10 hover:bg-white/5" onClick={decFont} aria-label="Decrease text size">
                       <Minus size={16} />
                     </button>
-                    <div className="text-xs font-black w-16 text-center">
-                      {a11y.fontScale === 1 ? '100%' : a11y.fontScale === 1.15 ? '115%' : '130%'}
-                    </div>
-                    <button
-                      className="p-2 rounded-xl border border-white/10 hover:bg-white/5"
-                      onClick={incFont}
-                      aria-label="Increase text size"
-                    >
+                    <div className="text-xs font-black w-16 text-center">{a11y.fontScale === 1 ? '100%' : a11y.fontScale === 1.15 ? '115%' : '130%'}</div>
+                    <button className="p-2 rounded-xl border border-white/10 hover:bg-white/5" onClick={incFont} aria-label="Increase text size">
                       <Plus size={16} />
                     </button>
                   </div>
@@ -557,72 +474,38 @@ const App: React.FC = () => {
                   <span className="text-xs text-slate-300 flex items-center gap-2">
                     <Contrast size={16} /> High contrast
                   </span>
-                  <input
-                    type="checkbox"
-                    checked={a11y.highContrast}
-                    onChange={(e) => setA11y((p) => ({ ...p, highContrast: e.target.checked }))}
-                    className="h-4 w-4"
-                    aria-label="Toggle high contrast"
-                  />
+                  <input type="checkbox" checked={a11y.highContrast} onChange={(e) => setA11y((p) => ({ ...p, highContrast: e.target.checked }))} className="h-4 w-4" />
                 </label>
 
                 <label className="flex items-center justify-between gap-3 py-2">
                   <span className="text-xs text-slate-300">Reduce motion</span>
-                  <input
-                    type="checkbox"
-                    checked={a11y.reduceMotion}
-                    onChange={(e) => setA11y((p) => ({ ...p, reduceMotion: e.target.checked }))}
-                    className="h-4 w-4"
-                    aria-label="Toggle reduce motion"
-                  />
+                  <input type="checkbox" checked={a11y.reduceMotion} onChange={(e) => setA11y((p) => ({ ...p, reduceMotion: e.target.checked }))} className="h-4 w-4" />
                 </label>
 
                 <label className="flex items-center justify-between gap-3 py-2">
                   <span className="text-xs text-slate-300">Show focus outline</span>
-                  <input
-                    type="checkbox"
-                    checked={a11y.focusRing}
-                    onChange={(e) => setA11y((p) => ({ ...p, focusRing: e.target.checked }))}
-                    className="h-4 w-4"
-                    aria-label="Toggle focus outline"
-                  />
+                  <input type="checkbox" checked={a11y.focusRing} onChange={(e) => setA11y((p) => ({ ...p, focusRing: e.target.checked }))} className="h-4 w-4" />
                 </label>
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/10">
                 <div className="font-black text-sm mb-2">Links</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <a
-                    href="/privacy"
-                    className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10"
-                  >
+                  <a href="/privacy.html" className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10">
                     Privacy
                   </a>
-                  <a
-                    href="/terms"
-                    className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10"
-                  >
+                  <a href="/terms.html" className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10">
                     Terms
                   </a>
-                  <a
-                    href="mailto:callilcoil@gmail.com?subject=LingoLive%20Contact"
-                    className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10"
-                  >
+                  <a href="mailto:callilcoil@gmail.com?subject=LingoLive%20Contact" className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10">
                     Contact
                   </a>
-                </div>
-
-                <div className="text-[10px] text-slate-500 mt-3">
-                  Tip: if you don’t have /privacy and /terms pages yet, they may show 404. We can add them next.
                 </div>
               </div>
             </div>
 
             <div className="mt-5 flex justify-end">
-              <button
-                onClick={() => setIsSettingsOpen(false)}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-black text-xs"
-              >
+              <button onClick={() => setIsSettingsOpen(false)} className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-black text-xs">
                 Done
               </button>
             </div>
@@ -634,5 +517,4 @@ const App: React.FC = () => {
 };
 
 export default App;
-
 
