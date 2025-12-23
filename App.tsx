@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { Mic, MicOff, Headphones, LogOut, MessageSquare, AlertCircle } from 'lucide-react';
@@ -90,13 +89,18 @@ const App: React.FC = () => {
   }, [stopConversation]);
 
   const startConversation = async () => {
-    // ✅ Vite/Netlify: environment variables must be VITE_*
+    // ✅ Vite: only VITE_* env vars are exposed to the client bundle
     const apiKey =
       (import.meta as any).env?.VITE_API_KEY ||
       (import.meta as any).env?.API_KEY; // fallback (optional)
 
+    // 🔎 TEMP DEBUG (remove later)
+    console.log('MODE:', import.meta.env.MODE);
+    console.log('Has VITE_API_KEY:', 'VITE_API_KEY' in import.meta.env);
+    console.log('VITE_API_KEY value:', import.meta.env.VITE_API_KEY);
+
     if (!apiKey) {
-      setError('Missing API Key. Set VITE_API_KEY in Netlify Environment variables.');
+      setError('Missing API Key. Set VITE_API_KEY in Vercel Environment Variables.');
       setStatus(ConnectionStatus.ERROR);
       return;
     }
@@ -135,7 +139,6 @@ const App: React.FC = () => {
 
             scriptProcessor.onaudioprocess = (e) => {
               sessionPromise.then((s) => {
-                // ✅ use ref so mute works reliably
                 if (!isMutedRef.current && s) {
                   s.sendRealtimeInput({ media: createPcmBlob(e.inputBuffer.getChannelData(0)) });
                 }
@@ -182,214 +185,8 @@ const App: React.FC = () => {
               }
             }
 
-            // Handle audio parts
             const parts = m.serverContent?.modelTurn?.parts || [];
             for (const part of parts) {
               if (part.inlineData?.data) {
                 const audioData = part.inlineData.data;
-                setIsSpeaking(true);
-                nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
 
-                const buffer = await decodeAudioData(decode(audioData), outputCtx, 24000, 1);
-                const src = outputCtx.createBufferSource();
-                src.buffer = buffer;
-                src.connect(outputNode);
-
-                src.onended = () => {
-                  sourcesRef.current.delete(src);
-                  if (sourcesRef.current.size === 0) setIsSpeaking(false);
-                };
-
-                src.start(nextStartTimeRef.current);
-                nextStartTimeRef.current += buffer.duration;
-                sourcesRef.current.add(src);
-              }
-            }
-          },
-
-          onerror: (e) => {
-            console.error('Session error:', e);
-            setError('Connection lost. Please try again.');
-            stopConversation();
-          },
-
-          onclose: () => {
-            // ✅ avoid stale closure check
-            setStatus(ConnectionStatus.DISCONNECTED);
-          },
-        },
-
-        config: {
-          responseModalities: [Modality.AUDIO],
-          systemInstruction,
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-        },
-      });
-
-      activeSessionRef.current = await sessionPromise;
-    } catch (e) {
-      console.error('Start conversation error:', e);
-      setError('Microphone access denied or connection failed.');
-      setStatus(ConnectionStatus.ERROR);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-950 flex flex-col md:flex-row text-slate-200 overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-full md:w-80 bg-slate-900 border-r border-white/5 p-6 flex flex-col gap-6 z-20 overflow-y-auto">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
-            <Headphones className="text-white" />
-          </div>
-          <h1 className="text-xl font-black">LingoLive</h1>
-        </div>
-
-        <div className="space-y-4">
-          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Language Settings</label>
-          <div className="p-3 bg-slate-800/40 rounded-2xl border border-white/5 space-y-3">
-            <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 block ml-1">Learn</span>
-              <select
-                value={targetLang.code}
-                onChange={(e) => setTargetLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
-                disabled={status !== ConnectionStatus.DISCONNECTED}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
-              >
-                {SUPPORTED_LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.flag} {l.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 block ml-1">Native</span>
-              <select
-                value={nativeLang.code}
-                onChange={(e) => setNativeLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
-                disabled={status !== ConnectionStatus.DISCONNECTED}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
-              >
-                {SUPPORTED_LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.flag} {l.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Training Mode</label>
-          <div className="space-y-2">
-            {SCENARIOS.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => setSelectedScenario(s)}
-                disabled={status !== ConnectionStatus.DISCONNECTED}
-                className={`w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all ${
-                  selectedScenario.id === s.id
-                    ? 'bg-indigo-600/20 border-indigo-500'
-                    : 'bg-slate-800/40 border-transparent hover:bg-slate-800'
-                }`}
-              >
-                <span className="text-xl">{(s as any).icon}</span>
-                <div>
-                  <div className="font-bold text-xs">{(s as any).title}</div>
-                  <div className="text-[9px] text-slate-500">{(s as any).description}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex-1 flex flex-col mt-4 min-h-0">
-          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-            <MessageSquare size={12} /> Live Transcript
-          </label>
-          <div
-            ref={scrollRef}
-            className="flex-1 overflow-y-auto space-y-1 pr-2 scroll-smooth scrollbar-thin scrollbar-thumb-slate-700"
-          >
-            {transcript.length === 0 ? (
-              <div className="text-[10px] text-slate-600 italic mt-4 text-center">Your conversation will appear here...</div>
-            ) : (
-              transcript.map((entry, i) => <TranscriptItem key={i} entry={entry} />)
-            )}
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Experience */}
-      <main className="flex-1 flex flex-col items-center justify-center p-8 relative">
-        <div className="absolute top-8 right-8 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
-          <AudioVisualizer isActive={status === ConnectionStatus.CONNECTED && !isSpeaking && !isMuted} color="#10b981" />
-          <div className={`w-2 h-2 rounded-full ${status === ConnectionStatus.CONNECTED ? 'bg-green-500 animate-pulse' : 'bg-slate-700'}`} />
-          <span className="text-[10px] font-black tracking-widest uppercase">{status}</span>
-        </div>
-
-        <div className="flex-1 flex flex-col items-center justify-center gap-10 text-center w-full max-w-xl">
-          <Avatar
-            state={
-              status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'
-            }
-          />
-          <div className="space-y-2">
-            <h2 className="text-4xl font-black text-white tracking-tight">
-              {status === ConnectionStatus.CONNECTED ? (isSpeaking ? 'Gemini is speaking' : 'Listening...') : (selectedScenario as any).title}
-            </h2>
-            <p className="text-slate-500 text-sm max-w-md mx-auto">{(selectedScenario as any).description}</p>
-          </div>
-
-          {(isSpeaking || (status === ConnectionStatus.CONNECTED && !isMuted)) && (
-            <div className="h-12 flex items-center justify-center">
-              <AudioVisualizer isActive={true} color={isSpeaking ? '#6366f1' : '#10b981'} />
-            </div>
-          )}
-        </div>
-
-        <div className="w-full max-w-md flex flex-col items-center gap-8 py-10">
-          {error && (
-            <div className="text-red-400 text-xs font-bold bg-red-400/10 px-4 py-2 rounded-lg border border-red-400/20 flex items-center gap-2 animate-bounce">
-              <AlertCircle size={14} /> {error}
-            </div>
-          )}
-          <div className="flex items-center gap-6">
-            {status === ConnectionStatus.CONNECTED ? (
-              <>
-                <button
-                  onClick={() => setIsMuted(!isMuted)}
-                  title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
-                  className={`p-6 rounded-full border-2 transition-all shadow-2xl ${
-                    isMuted ? 'bg-red-500 border-red-400' : 'bg-slate-800 border-slate-700 hover:border-indigo-500'
-                  }`}
-                >
-                  {isMuted ? <MicOff /> : <Mic />}
-                </button>
-                <button
-                  onClick={stopConversation}
-                  className="bg-red-600 px-12 py-6 rounded-2xl font-black flex items-center gap-3 hover:bg-red-700 transition-colors shadow-2xl shadow-red-900/20"
-                >
-                  <LogOut /> EXIT
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={startConversation}
-                disabled={status === ConnectionStatus.CONNECTING}
-                className="bg-indigo-600 px-24 py-8 rounded-3xl font-black flex items-center gap-4 text-xl shadow-2xl shadow-indigo-900/40 hover:bg-indigo-500 transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Mic size={32} /> {status === ConnectionStatus.CONNECTING ? 'CONNECTING...' : 'START'}
-              </button>
-            )}
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-};
-
-export default App;
