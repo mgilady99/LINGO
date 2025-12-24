@@ -1,6 +1,6 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { Mic, MicOff, Headphones, LogOut, AlertCircle, Settings, X } from 'lucide-react';
+import { Mic, MicOff, Headphones, LogOut, AlertCircle } from 'lucide-react';
 
 // ייבוא מהקבצים הקיימים בפרויקט שלך
 import { ConnectionStatus, SUPPORTED_LANGUAGES, SCENARIOS, Language, PracticeScenario } from './types';
@@ -13,9 +13,9 @@ const MODEL_NAME = 'models/gemini-1.5-flash';
 const App: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
   
-  // ✅ בחירת שתי שפות: שפת יעד ושפת אם
-  const [targetLang, setTargetLang] = useState<Language>(() => SUPPORTED_LANGUAGES.find(l => l.code === 'en') || SUPPORTED_LANGUAGES[0]);
+  // ✅ בחירה של שתי שפות - שפת אם ושפת יעד
   const [nativeLang, setNativeLang] = useState<Language>(() => SUPPORTED_LANGUAGES.find(l => l.code === 'he') || SUPPORTED_LANGUAGES[0]);
+  const [targetLang, setTargetLang] = useState<Language>(() => SUPPORTED_LANGUAGES.find(l => l.code === 'en') || SUPPORTED_LANGUAGES[0]);
   
   const [selectedScenario, setSelectedScenario] = useState<PracticeScenario>(SCENARIOS[1]);
   const [isMuted, setIsMuted] = useState(false);
@@ -30,7 +30,7 @@ const App: React.FC = () => {
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
-  // פונקציית עצירה נקייה שמונעת את הלופ האדום בקונסול
+  // פונקציית עצירה נקייה שמונעת את הלופ האדום שראית בתמונה
   const stopConversation = useCallback(() => {
     if (audioProcessorRef.current) {
       audioProcessorRef.current.disconnect();
@@ -55,7 +55,7 @@ const App: React.FC = () => {
     const apiKey = (import.meta as any).env?.VITE_API_KEY || (import.meta as any).env?.API_KEY;
 
     if (!apiKey) {
-      setError('Missing API Key (VITE_API_KEY).');
+      setError('Missing API Key. Ensure VITE_API_KEY is configured in Cloudflare.');
       setStatus(ConnectionStatus.ERROR);
       return;
     }
@@ -75,8 +75,8 @@ const App: React.FC = () => {
       const session = await genAI.live.connect({
         model: MODEL_NAME,
         config: { 
-          // הנחיה למודל לתרגם בין שתי השפות
-          systemInstruction: `You are a ${selectedScenario.title}. Native language: ${nativeLang.name}, Target language: ${targetLang.name}. Translate between them and respond briefly.` 
+          // ✅ הנחיה למודל לתרגם בין שתי השפות שבחרת
+          systemInstruction: `You are a ${selectedScenario.title}. Translate between ${nativeLang.name} and ${targetLang.name}. Respond briefly.` 
         },
         callbacks: {
           onopen: () => {
@@ -124,7 +124,7 @@ const App: React.FC = () => {
             stopConversation();
           },
           onclose: (e) => {
-            if (e?.code === 1008) setError("Policy violation (1008): Project not on Paid Plan.");
+            if (e?.code === 1008) setError("Policy violation (1008): Link Billing to this project.");
             stopConversation();
           }
         }
@@ -141,7 +141,7 @@ const App: React.FC = () => {
     <div className="h-dvh w-dvw bg-slate-950 text-slate-200 flex flex-col md:flex-row overflow-hidden font-sans">
       <aside className="w-80 bg-slate-900 p-6 border-r border-white/5 flex flex-col gap-6 hidden md:flex">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg"><Headphones className="text-white" /></div>
+          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center"><Headphones className="text-white" /></div>
           <h1 className="text-xl font-black">LingoLive</h1>
         </div>
         
@@ -184,9 +184,12 @@ const App: React.FC = () => {
           {error && <div className="text-red-400 text-[10px] bg-red-500/10 p-3 rounded-xl border border-red-500/20 max-w-sm mx-auto flex items-center gap-2"><AlertCircle size={14}/> {error}</div>}
         </div>
 
-        <div className="mt-10">
+        <div className="mt-10 flex gap-4">
           {status === ConnectionStatus.CONNECTED ? (
-            <button onClick={stopConversation} className="px-12 py-4 bg-red-600 hover:bg-red-700 rounded-3xl font-black text-lg shadow-xl">STOP SESSION</button>
+            <>
+              <button onClick={() => setIsMuted(!isMuted)} className="px-8 py-3 bg-slate-800 rounded-2xl font-bold">{isMuted ? 'UNMUTE' : 'MUTE'}</button>
+              <button onClick={stopConversation} className="px-8 py-3 bg-red-600 rounded-2xl font-bold text-white">STOP</button>
+            </>
           ) : (
             <button onClick={startConversation} className="px-12 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-3xl font-black text-lg shadow-xl active:scale-95 transition-all">START SESSION</button>
           )}
