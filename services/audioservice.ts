@@ -1,3 +1,4 @@
+// הפיכת נתוני מיקרופון לפורמט שגוגל מבינה
 export const createPcmBlob = (data: Float32Array): Blob => {
   const pcm16 = new Int16Array(data.length);
   for (let i = 0; i < data.length; i++) {
@@ -6,18 +7,22 @@ export const createPcmBlob = (data: Float32Array): Blob => {
   return new Blob([pcm16.buffer], { type: 'audio/pcm' });
 };
 
+// ✅ פונקציית המפתח: הפיכת נתוני Gemini לצליל אמיתי
 export const decodeAudioData = async (ctx: AudioContext, base64Data: string): Promise<AudioBuffer> => {
   const binaryString = atob(base64Data);
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
+  
   const pcm16 = new Int16Array(bytes.buffer);
   const float32 = new Float32Array(pcm16.length);
   for (let i = 0; i < pcm16.length; i++) {
     float32[i] = pcm16[i] / 0x7FFF;
   }
-  const buffer = ctx.createBuffer(1, float32.length, 24000); // 24kHz הוא הסטנדרט של Gemini
+  
+  // גוגל שולחת אודיו ב-24,000Hz (מונו)
+  const buffer = ctx.createBuffer(1, float32.length, 24000);
   buffer.getChannelData(0).set(float32);
   return buffer;
 };
