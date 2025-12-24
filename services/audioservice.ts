@@ -1,4 +1,3 @@
-// הפיכת נתוני המיקרופון לפורמט שגוגל מבינה
 export const createPcmBlob = (data: Float32Array): Blob => {
   const pcm16 = new Int16Array(data.length);
   for (let i = 0; i < data.length; i++) {
@@ -7,7 +6,7 @@ export const createPcmBlob = (data: Float32Array): Blob => {
   return new Blob([pcm16.buffer], { type: 'audio/pcm' });
 };
 
-// הפיכת נתוני Gemini לצליל אמיתי שהרמקולים משמיעים
+// 🔴 פונקציה חדשה לחלוטין שמאפשרת לאווטאר לדבר
 export const decodeAudioData = async (ctx: AudioContext, base64Data: string): Promise<AudioBuffer> => {
   const binaryString = atob(base64Data);
   const bytes = new Uint8Array(binaryString.length);
@@ -19,7 +18,7 @@ export const decodeAudioData = async (ctx: AudioContext, base64Data: string): Pr
   for (let i = 0; i < pcm16.length; i++) {
     float32[i] = pcm16[i] / 0x7FFF;
   }
-  const buffer = ctx.createBuffer(1, float32.length, 24000);
+  const buffer = ctx.createBuffer(1, float32.length, 24000); // 🔴 Gemini עובד ב-24kHz
   buffer.getChannelData(0).set(float32);
   return buffer;
 };
