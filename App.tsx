@@ -2,18 +2,18 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { Mic, MicOff, Headphones, LogOut, AlertCircle, Settings, X } from 'lucide-react';
 
-// ייבוא מהקבצים שלך
+// ייבוא מהקבצים הקיימים בפרויקט שלך
 import { ConnectionStatus, SUPPORTED_LANGUAGES, SCENARIOS, Language, PracticeScenario } from './types';
 import { createPcmBlob, decodeAudioData } from './services/audioservice';
 import Avatar from './components/avatar';
 
-// ✅ המודל היחיד שתומך ב-Live API בצורה יציבה
+// ✅ שם המודל המדויק הנדרש עבור ה-Live API
 const MODEL_NAME = 'models/gemini-1.5-flash';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
   
-  // ✅ הגדרת שתי שפות: שפת יעד ושפת אם
+  // ✅ בחירת שתי שפות: שפת יעד ושפת אם
   const [targetLang, setTargetLang] = useState<Language>(() => SUPPORTED_LANGUAGES.find(l => l.code === 'en') || SUPPORTED_LANGUAGES[0]);
   const [nativeLang, setNativeLang] = useState<Language>(() => SUPPORTED_LANGUAGES.find(l => l.code === 'he') || SUPPORTED_LANGUAGES[0]);
   
@@ -30,7 +30,7 @@ const App: React.FC = () => {
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
-  // עצירה נקייה למניעת לופים של שגיאות בקונסול
+  // פונקציית עצירה נקייה שמונעת את הלופ האדום בקונסול
   const stopConversation = useCallback(() => {
     if (audioProcessorRef.current) {
       audioProcessorRef.current.disconnect();
@@ -75,8 +75,8 @@ const App: React.FC = () => {
       const session = await genAI.live.connect({
         model: MODEL_NAME,
         config: { 
-          // ✅ הנחיה למודל להשתמש בשתי השפות הנבחרות
-          systemInstruction: `You are a ${selectedScenario.title}. Native language: ${nativeLang.name}, Target language: ${targetLang.name}. Your job is to translate and assist. Respond briefly and naturally.` 
+          // הנחיה למודל לתרגם בין שתי השפות
+          systemInstruction: `You are a ${selectedScenario.title}. Native language: ${nativeLang.name}, Target language: ${targetLang.name}. Translate between them and respond briefly.` 
         },
         callbacks: {
           onopen: () => {
@@ -86,7 +86,7 @@ const App: React.FC = () => {
             audioProcessorRef.current = proc;
             
             proc.onaudioprocess = (e) => {
-              // הגנה: שולח רק אם החיבור פתוח
+              // הגנה: שולח אודיו רק אם החיבור פתוח באמת
               if (activeSessionRef.current && activeSessionRef.current.readyState === 1 && !isMuted) {
                 try {
                   activeSessionRef.current.sendRealtimeInput({ media: createPcmBlob(e.inputBuffer.getChannelData(0)) });
@@ -120,7 +120,7 @@ const App: React.FC = () => {
           },
           onerror: (e) => {
             console.error("API Error:", e);
-            setError("Connection failed. Please check your Billing Plan.");
+            setError("Connection failed. Check Billing linkage.");
             stopConversation();
           },
           onclose: (e) => {
@@ -139,67 +139,56 @@ const App: React.FC = () => {
 
   return (
     <div className="h-dvh w-dvw bg-slate-950 text-slate-200 flex flex-col md:flex-row overflow-hidden font-sans">
-      {/* SIDEBAR */}
-      <aside className="w-80 bg-slate-900 p-6 border-r border-white/5 flex flex-col gap-6 hidden md:flex shadow-2xl">
+      <aside className="w-80 bg-slate-900 p-6 border-r border-white/5 flex flex-col gap-6 hidden md:flex">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg"><Headphones className="text-white" /></div>
           <h1 className="text-xl font-black">LingoLive</h1>
         </div>
         
         <div className="space-y-6">
-          {/* ✅ שדה בחירת שפת אם */}
-          <div className="space-y-2">
-             <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Your Native Language</label>
-             <select className="w-full bg-slate-950 border border-slate-700 p-3 rounded-xl text-sm focus:border-indigo-500 transition-colors" value={nativeLang.code} onChange={e => setNativeLang(SUPPORTED_LANGUAGES.find(l => l.code === e.target.value)!)}>
+          <div className="space-y-1">
+             <label className="text-[10px] text-slate-500 font-bold uppercase">Your Native Language</label>
+             <select className="w-full bg-slate-950 border border-slate-700 p-2 rounded-lg text-xs" value={nativeLang.code} onChange={e => setNativeLang(SUPPORTED_LANGUAGES.find(l => l.code === e.target.value)!)}>
                {SUPPORTED_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
              </select>
           </div>
 
-          {/* ✅ שדה בחירת שפת יעד */}
-          <div className="space-y-2">
-             <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Language to Practice</label>
-             <select className="w-full bg-slate-950 border border-slate-700 p-3 rounded-xl text-sm focus:border-indigo-500 transition-colors" value={targetLang.code} onChange={e => setTargetLang(SUPPORTED_LANGUAGES.find(l => l.code === e.target.value)!)}>
+          <div className="space-y-1">
+             <label className="text-[10px] text-slate-500 font-bold uppercase">Target Language</label>
+             <select className="w-full bg-slate-950 border border-slate-700 p-2 rounded-lg text-xs" value={targetLang.code} onChange={e => setTargetLang(SUPPORTED_LANGUAGES.find(l => l.code === e.target.value)!)}>
                {SUPPORTED_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
              </select>
           </div>
 
           <div className="pt-4 space-y-2">
-            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Practice Mode</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Mode</label>
             {SCENARIOS.map(s => (
-              <button key={s.id} onClick={() => setSelectedScenario(s)} className={`w-full p-4 rounded-2xl border text-left text-xs transition-all ${selectedScenario.id === s.id ? 'bg-indigo-600/20 border-indigo-500 shadow-inner' : 'bg-slate-800/40 border-transparent hover:bg-slate-800'}`}>
-                <span className="mr-3 text-lg">{s.icon}</span> {s.title}
+              <button key={s.id} onClick={() => setSelectedScenario(s)} className={`w-full p-3 rounded-xl border text-left text-xs transition-all ${selectedScenario.id === s.id ? 'bg-indigo-600/20 border-indigo-500' : 'bg-slate-800/40 border-transparent hover:bg-slate-800'}`}>
+                {s.icon} {s.title}
               </button>
             ))}
           </div>
         </div>
       </aside>
 
-      {/* MAIN CONTENT */}
       <main className="flex-1 flex flex-col items-center justify-center p-6 relative">
-        <div className="absolute top-6 right-6 flex items-center gap-2 bg-slate-900 px-4 py-2 rounded-full border border-white/10 text-[10px] font-bold shadow-lg">
+        <div className="absolute top-6 right-6 flex items-center gap-2 bg-slate-900 px-4 py-2 rounded-full border border-white/10 text-[10px] font-bold">
           <div className={`w-2 h-2 rounded-full ${status === ConnectionStatus.CONNECTED ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
           {status}
         </div>
 
-        <div className="w-64 h-64 mb-8">
-            <Avatar state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'} />
+        <Avatar state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'} />
+
+        <div className="mt-8 text-center space-y-2">
+          <h2 className="text-3xl font-black">{isSpeaking ? 'Gemini Speaking...' : 'LingoLive'}</h2>
+          {error && <div className="text-red-400 text-[10px] bg-red-500/10 p-3 rounded-xl border border-red-500/20 max-w-sm mx-auto flex items-center gap-2"><AlertCircle size={14}/> {error}</div>}
         </div>
 
-        <div className="text-center space-y-4">
-          <h2 className="text-3xl font-black tracking-tight">{isSpeaking ? 'Gemini Speaking...' : status === ConnectionStatus.CONNECTED ? 'Listening...' : 'Ready to translate?'}</h2>
-          {error && <div className="text-red-400 text-[10px] bg-red-500/10 p-4 rounded-2xl border border-red-500/20 max-w-sm mx-auto flex items-center gap-2 shadow-sm"><AlertCircle size={14}/> {error}</div>}
-        </div>
-
-        <div className="mt-12 flex gap-4">
+        <div className="mt-10">
           {status === ConnectionStatus.CONNECTED ? (
-            <>
-              <button onClick={() => setIsMuted(!isMuted)} className={`px-8 py-4 rounded-3xl font-bold flex items-center gap-2 border transition-all ${isMuted ? 'bg-red-500/10 border-red-500 text-red-500' : 'bg-slate-800 border-slate-700'}`}>
-                {isMuted ? <MicOff/> : <Mic/>} {isMuted ? 'UNMUTE' : 'MUTE'}
-              </button>
-              <button onClick={stopConversation} className="px-10 py-4 bg-red-600 hover:bg-red-700 rounded-3xl font-black text-white shadow-xl transition-all active:scale-95">STOP SESSION</button>
-            </>
+            <button onClick={stopConversation} className="px-12 py-4 bg-red-600 hover:bg-red-700 rounded-3xl font-black text-lg shadow-xl">STOP SESSION</button>
           ) : (
-            <button onClick={startConversation} className="px-16 py-5 bg-indigo-600 hover:bg-indigo-500 rounded-full font-black text-xl shadow-2xl shadow-indigo-900/40 transition-all active:scale-95">START LIVE SESSION</button>
+            <button onClick={startConversation} className="px-12 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-3xl font-black text-lg shadow-xl active:scale-95 transition-all">START SESSION</button>
           )}
         </div>
       </main>
