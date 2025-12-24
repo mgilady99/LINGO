@@ -1,23 +1,26 @@
-export const createPcmBlob = (data: Float32Array): Blob => {
-  const pcm16 = new Int16Array(data.length);
-  for (let i = 0; i < data.length; i++) {
-    pcm16[i] = Math.max(-1, Math.min(1, data[i])) * 0x7FFF;
-  }
-  return new Blob([pcm16.buffer], { type: 'audio/pcm' });
-};
-
-export const decodeAudioData = async (ctx: AudioContext, base64Data: string): Promise<AudioBuffer> => {
-  const binaryString = atob(base64Data);
+export function decode(base64: string): Uint8Array {
+  const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+  for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+  return bytes;
+}
+
+export async function decodeAudioData(data: Uint8Array, ctx: AudioContext, sampleRate: number, numChannels: number): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
   }
-  const pcm16 = new Int16Array(bytes.buffer);
-  const float32 = new Float32Array(pcm16.length);
-  for (let i = 0; i < pcm16.length; i++) {
-    float32[i] = pcm16[i] / 0x7FFF;
-  }
-  const buffer = ctx.createBuffer(1, float32.length, 24000);
-  buffer.getChannelData(0).set(float32);
   return buffer;
-};
+}
+
+export function createPcmBlob(data: Float32Array): any {
+  const int16 = new Int16Array(data.length);
+  for (let i = 0; i < data.length; i++) int16[i] = data[i] * 32768;
+  const bytes = new Uint8Array(int16.buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return { data: btoa(binary), mimeType: 'audio/pcm;rate=16000' };
+}
