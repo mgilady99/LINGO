@@ -37,7 +37,7 @@ type A11yPrefs = {
 const A11Y_STORAGE_KEY = 'lingolive_a11y_v1';
 const CONTACT_EMAIL = 'callilcoil@gmail.com';
 
-// ✅ Languages list (ABC, no duplicates) – per your request
+// שפות לפי ABC + בלי כפילויות
 const LANGUAGES_ABC: Language[] = [
   { code: 'ar', name: 'Arabic', flag: '🇸🇦' },
   { code: 'zh', name: 'Chinese (Mandarin)', flag: '🇨🇳' },
@@ -59,7 +59,6 @@ const LANGUAGES_ABC: Language[] = [
 const App: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
 
-  // defaults
   const [targetLang, setTargetLang] = useState<Language>(() => LANGUAGES_ABC.find(l => l.code === 'en') || LANGUAGES_ABC[0]);
   const [nativeLang, setNativeLang] = useState<Language>(() => LANGUAGES_ABC.find(l => l.code === 'he') || LANGUAGES_ABC[0]);
   const [selectedScenario, setSelectedScenario] = useState<PracticeScenario>(() => SCENARIOS[1] as any);
@@ -69,14 +68,13 @@ const App: React.FC = () => {
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
 
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
-  // keep transcript only for internal use (no labels / no placeholder text)
   const [transcript, setTranscript] = useState<TranscriptionEntry[]>([]);
   const currentInputTranscriptionRef = useRef('');
   const currentOutputTranscriptionRef = useRef('');
 
-  // settings + a11y
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [a11y, setA11y] = useState<A11yPrefs>({
     fontScale: 1,
@@ -85,7 +83,6 @@ const App: React.FC = () => {
     focusRing: true,
   });
 
-  // simple internal pages
   const [page, setPage] = useState<PageView>('main');
 
   const inputAudioContextRef = useRef<AudioContext | null>(null);
@@ -97,7 +94,7 @@ const App: React.FC = () => {
 
   const activeSessionRef = useRef<any>(null);
 
-  // load/save a11y
+  // a11y load/save
   useEffect(() => {
     try {
       const saved = localStorage.getItem(A11Y_STORAGE_KEY);
@@ -110,13 +107,11 @@ const App: React.FC = () => {
     } catch {}
   }, [a11y]);
 
-  // reduce motion class
   useEffect(() => {
     if (a11y.reduceMotion) document.documentElement.classList.add('motion-reduce');
     else document.documentElement.classList.remove('motion-reduce');
   }, [a11y.reduceMotion]);
 
-  // ESC closes settings
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setIsSettingsOpen(false);
@@ -126,25 +121,21 @@ const App: React.FC = () => {
   }, [isSettingsOpen]);
 
   const stopConversation = useCallback(() => {
-    // stop session
     if (activeSessionRef.current) {
       try { activeSessionRef.current.close(); } catch {}
       activeSessionRef.current = null;
     }
 
-    // stop mic
     if (micStreamRef.current) {
       micStreamRef.current.getTracks().forEach((t) => t.stop());
       micStreamRef.current = null;
     }
 
-    // stop processor
     if (processorRef.current) {
       try { processorRef.current.disconnect(); } catch {}
       processorRef.current = null;
     }
 
-    // stop playing audio
     sourcesRef.current.forEach((s) => { try { s.stop(); } catch {} });
     sourcesRef.current.clear();
 
@@ -155,10 +146,21 @@ const App: React.FC = () => {
 
   useEffect(() => () => stopConversation(), [stopConversation]);
 
+  // ✅ only decode if mimeType says it's audio
+  const isAudioInline = (part: any) => {
+    const mt = part?.inlineData?.mimeType || part?.inlineData?.mime_type || '';
+    return typeof mt === 'string' && mt.toLowerCase().startsWith('audio/');
+  };
+
+  const safeErr = (e: any) => {
+    const msg = e?.message ? String(e.message) : String(e);
+    return msg.length > 200 ? msg.slice(0, 200) + '…' : msg;
+  };
+
   const startConversation = useCallback(async () => {
     setError(null);
+    setErrorDetails(null);
 
-    // ✅ only VITE_* is exposed
     const apiKey = (import.meta as any).env?.VITE_API_KEY;
 
     if (!apiKey) {
@@ -167,29 +169,35 @@ const App: React.FC = () => {
       return;
     }
 
-    // if already running, ignore
     if (status === ConnectionStatus.CONNECTING || status === ConnectionStatus.CONNECTED) return;
 
     setStatus(ConnectionStatus.CONNECTING);
 
     try {
-      // mic permission
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
 
       if (!inputAudioContextRef.current) inputAudioContextRef.current = new AudioContext({ sampleRate: 16000 });
       if (!outputAudioContextRef.current) outputAudioContextRef.current = new AudioContext({ sampleRate: 24000 });
 
+      // ✅ fix Android/Chrome: contexts may start suspended
+      try { await inputAudioContextRef.current.resume(); } catch {}
+      try { await outputAudioContextRef.current.resume(); } catch {}
+
       const ai = new GoogleGenAI({ apiKey });
 
-      // system instruction
       const isTranslator = (selectedScenario as any)?.id === 'translator';
       const systemInstruction = isTranslator
         ? `You are a professional real-time translator. Translate ${nativeLang.name} to ${targetLang.name} and vice versa. Speak ONLY the translation.`
         : `You are a patient and friendly ${targetLang.name} tutor. User's native language is ${nativeLang.name}. Scenario: ${(selectedScenario as any).title}. Correct errors gently and keep the conversation flowing.`;
 
-      const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+      // ⚠️ IMPORTANT:
+      // Use the SAME model your repo originally used (if different).
+      // If you had a working model earlier, put it here.
+      const MODEL_NAME = (import.meta as any).env?.VITE_GEMINI_MODEL || 'gemini-2.0-flash-live-001';
+
+      const session = await ai.live.connect({
+        model: MODEL_NAME,
         callbacks: {
           onopen: () => {
             setStatus(ConnectionStatus.CONNECTED);
@@ -200,15 +208,15 @@ const App: React.FC = () => {
             processorRef.current = processor;
 
             processor.onaudioprocess = (e) => {
-              // avoid stale closure
               if (isMutedRef.current) return;
               const s = activeSessionRef.current;
               if (!s) return;
 
               try {
                 s.sendRealtimeInput({ media: createPcmBlob(e.inputBuffer.getChannelData(0)) });
-              } catch {
-                // don't auto-stop here; just surface error
+              } catch (err: any) {
+                setError('Audio send error.');
+                setErrorDetails(safeErr(err));
               }
             };
 
@@ -250,43 +258,57 @@ const App: React.FC = () => {
               }
 
               const parts = m.serverContent?.modelTurn?.parts || [];
-              for (const part of parts) {
-                if (!part.inlineData?.data) continue;
+              for (const part of parts as any[]) {
+                if (!part?.inlineData?.data) continue;
 
-                // audio
+                // ✅ CRITICAL FIX: only decode if it's actually audio
+                if (!isAudioInline(part)) {
+                  continue;
+                }
+
                 const audioData = part.inlineData.data;
+
+                // In some SDK versions it can be base64 string, in others bytes-like
+                // Your decode() must match your services/audioservice implementation.
                 setIsSpeaking(true);
 
-                const pcm = decode(audioData); // from your service
-                const outputCtx = outputAudioContextRef.current!;
-                const audioBuffer = await decodeAudioData(outputCtx, pcm);
+                try {
+                  const pcm = decode(audioData);
+                  const outputCtx = outputAudioContextRef.current!;
+                  try { await outputCtx.resume(); } catch {}
 
-                const sourceNode = outputCtx.createBufferSource();
-                sourceNode.buffer = audioBuffer;
-                sourceNode.connect(outputCtx.destination);
+                  const audioBuffer = await decodeAudioData(outputCtx, pcm);
 
-                const now = outputCtx.currentTime;
-                const startAt = Math.max(now, nextStartTimeRef.current);
-                sourceNode.start(startAt);
-                nextStartTimeRef.current = startAt + audioBuffer.duration;
+                  const sourceNode = outputCtx.createBufferSource();
+                  sourceNode.buffer = audioBuffer;
+                  sourceNode.connect(outputCtx.destination);
 
-                sourcesRef.current.add(sourceNode);
-                sourceNode.onended = () => {
-                  sourcesRef.current.delete(sourceNode);
-                  if (sourcesRef.current.size === 0) setIsSpeaking(false);
-                };
+                  const now = outputCtx.currentTime;
+                  const startAt = Math.max(now, nextStartTimeRef.current);
+                  sourceNode.start(startAt);
+                  nextStartTimeRef.current = startAt + audioBuffer.duration;
+
+                  sourcesRef.current.add(sourceNode);
+                  sourceNode.onended = () => {
+                    sourcesRef.current.delete(sourceNode);
+                    if (sourcesRef.current.size === 0) setIsSpeaking(false);
+                  };
+                } catch (decodeErr: any) {
+                  // ✅ skip bad audio chunks instead of killing session
+                  setError('Audio decode error (skipped chunk).');
+                  setErrorDetails(safeErr(decodeErr));
+                  setIsSpeaking(false);
+                }
               }
             } catch (err: any) {
-              // ✅ THIS is the key: show error instead of silently flipping back to START
               console.error('onmessage error:', err);
-              setError('Audio/session error. Please try again. If it repeats, refresh the page.');
+              setError('Audio/session error.');
+              setErrorDetails(safeErr(err));
               setIsSpeaking(false);
-              // keep session alive; user can stop manually
             }
           },
 
           onclose: () => {
-            // server closed connection
             setIsSpeaking(false);
             setStatus(ConnectionStatus.DISCONNECTED);
           },
@@ -294,6 +316,7 @@ const App: React.FC = () => {
           onerror: (e: any) => {
             console.error('session error:', e);
             setError('Session error. Please try again.');
+            setErrorDetails(safeErr(e));
             setIsSpeaking(false);
             setStatus(ConnectionStatus.ERROR);
           },
@@ -301,13 +324,10 @@ const App: React.FC = () => {
 
         config: {
           systemInstruction,
-          // keep modalities as audio
           responseModalities: ['AUDIO'],
         } as any,
       });
 
-      // store resolved session
-      const session = await sessionPromise;
       activeSessionRef.current = session;
     } catch (err: any) {
       console.error('startConversation error:', err);
@@ -318,9 +338,8 @@ const App: React.FC = () => {
           : 'Could not start. Please refresh and try again.';
 
       setError(msg);
+      setErrorDetails(safeErr(err));
       setStatus(ConnectionStatus.ERROR);
-
-      // cleanup partial start
       stopConversation();
     }
   }, [nativeLang.name, targetLang.name, selectedScenario, status, stopConversation]);
@@ -363,11 +382,8 @@ const App: React.FC = () => {
 
   const MainPage = () => (
     <div className={rootClasses} style={fontScaleStyle}>
-      {/* layout: desktop = sidebar + main, mobile = top settings + main */}
       <div className="h-full w-full flex flex-col md:flex-row overflow-hidden">
-        {/* LEFT: controls (desktop fixed column, mobile top card) */}
         <aside className="w-full md:w-96 md:h-full bg-slate-900 border-r border-white/5 p-4 md:p-6 flex flex-col gap-4 overflow-hidden">
-          {/* header row */}
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
@@ -389,80 +405,74 @@ const App: React.FC = () => {
             </button>
           </div>
 
-          {/* mobile: languages (33%) + mode (66%) in same row */}
-          <div className="grid grid-cols-1 md:grid-cols-1 gap-3">
-            <div className="grid grid-cols-3 gap-3 items-start">
-              {/* languages: 33% */}
-              <div className="col-span-1 space-y-2">
-                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Languages</div>
+          <div className="grid grid-cols-3 gap-3 items-start">
+            <div className="col-span-1 space-y-2">
+              <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Languages</div>
 
-                <div className="space-y-2">
-                  <div className="space-y-1">
-                    <div className="text-[10px] text-slate-400">Learn</div>
-                    <select
-                      value={targetLang.code}
-                      onChange={(e) => setTargetLang(LANGUAGES_ABC.find((l) => l.code === e.target.value) || LANGUAGES_ABC[0])}
-                      disabled={status !== ConnectionStatus.DISCONNECTED}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-2 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
-                      aria-label="Select learning language"
-                    >
-                      {LANGUAGES_ABC.map((l) => (
-                        <option key={l.code} value={l.code}>
-                          {l.flag} {l.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+              <div className="space-y-2">
+                <div className="space-y-1">
+                  <div className="text-[10px] text-slate-400">Learn</div>
+                  <select
+                    value={targetLang.code}
+                    onChange={(e) => setTargetLang(LANGUAGES_ABC.find((l) => l.code === e.target.value) || LANGUAGES_ABC[0])}
+                    disabled={status !== ConnectionStatus.DISCONNECTED}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-2 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                    aria-label="Select learning language"
+                  >
+                    {LANGUAGES_ABC.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.flag} {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-                  <div className="space-y-1">
-                    <div className="text-[10px] text-slate-400">Native</div>
-                    <select
-                      value={nativeLang.code}
-                      onChange={(e) => setNativeLang(LANGUAGES_ABC.find((l) => l.code === e.target.value) || LANGUAGES_ABC[0])}
-                      disabled={status !== ConnectionStatus.DISCONNECTED}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-2 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
-                      aria-label="Select native language"
-                    >
-                      {LANGUAGES_ABC.map((l) => (
-                        <option key={l.code} value={l.code}>
-                          {l.flag} {l.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div className="space-y-1">
+                  <div className="text-[10px] text-slate-400">Native</div>
+                  <select
+                    value={nativeLang.code}
+                    onChange={(e) => setNativeLang(LANGUAGES_ABC.find((l) => l.code === e.target.value) || LANGUAGES_ABC[0])}
+                    disabled={status !== ConnectionStatus.DISCONNECTED}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-2 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                    aria-label="Select native language"
+                  >
+                    {LANGUAGES_ABC.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.flag} {l.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
+            </div>
 
-              {/* modes: 66% */}
-              <div className="col-span-2 space-y-2">
-                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mode</div>
-                <div className="space-y-2">
-                  {SCENARIOS.map((s: any) => (
-                    <button
-                      key={s.id}
-                      onClick={() => setSelectedScenario(s)}
-                      disabled={status !== ConnectionStatus.DISCONNECTED}
-                      className={[
-                        'w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all',
-                        selectedScenario?.id === s.id
-                          ? 'bg-indigo-600/20 border-indigo-500'
-                          : 'bg-slate-800/40 border-transparent hover:bg-slate-800',
-                      ].join(' ')}
-                      aria-label={`Select mode ${s.title}`}
-                    >
-                      <span className="text-lg">{s.icon}</span>
-                      <div>
-                        <div className="font-black text-xs">{s.title}</div>
-                        <div className="text-[10px] text-slate-500">{s.description}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
+            <div className="col-span-2 space-y-2">
+              <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mode</div>
+              <div className="space-y-2">
+                {SCENARIOS.map((s: any) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setSelectedScenario(s)}
+                    disabled={status !== ConnectionStatus.DISCONNECTED}
+                    className={[
+                      'w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all',
+                      selectedScenario?.id === s.id
+                        ? 'bg-indigo-600/20 border-indigo-500'
+                        : 'bg-slate-800/40 border-transparent hover:bg-slate-800',
+                    ].join(' ')}
+                    aria-label={`Select mode ${s.title}`}
+                  >
+                    <span className="text-lg">{s.icon}</span>
+                    <div>
+                      <div className="font-black text-xs">{s.title}</div>
+                      <div className="text-[10px] text-slate-500">{s.description}</div>
+                    </div>
+                  </button>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* footer left: move year + settings icon to bottom (desktop left column) */}
           <div className="mt-auto pt-3 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-500">
             <div>© 2025 LingoLive</div>
             <button
@@ -476,10 +486,8 @@ const App: React.FC = () => {
           </div>
         </aside>
 
-        {/* RIGHT: main */}
         <main className="flex-1 h-full overflow-hidden flex flex-col">
           <div className="relative flex-1 overflow-hidden flex flex-col items-center justify-center p-4 md:p-8 gap-4">
-            {/* status pill */}
             <div className="absolute top-4 right-4 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
               <AudioVisualizer isActive={status === ConnectionStatus.CONNECTED && !isSpeaking && !isMuted} color="#10b981" />
               <div
@@ -490,7 +498,6 @@ const App: React.FC = () => {
               <span className="text-[10px] font-black tracking-widest uppercase">{status}</span>
             </div>
 
-            {/* START button TOP (always) */}
             {status === ConnectionStatus.CONNECTED ? (
               <div className="w-full max-w-xl flex items-center justify-center gap-3">
                 <button
@@ -523,14 +530,12 @@ const App: React.FC = () => {
               </button>
             )}
 
-            {/* avatar 20% smaller */}
             <div className="scale-[0.8] origin-top">
               <Avatar
                 state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'}
               />
             </div>
 
-            {/* title */}
             <div className="text-center space-y-1">
               <h2 className="text-2xl md:text-4xl font-black text-white tracking-tight">
                 {status === ConnectionStatus.CONNECTED
@@ -544,14 +549,20 @@ const App: React.FC = () => {
               </p>
             </div>
 
-            {/* error */}
-            {error && (
-              <div className="max-w-xl w-full text-red-300 text-xs font-black bg-red-400/10 px-4 py-3 rounded-xl border border-red-400/20 flex items-center gap-2">
-                <AlertCircle size={14} /> {error}
+            {(error || errorDetails) && (
+              <div className="max-w-xl w-full text-red-200 text-xs font-black bg-red-400/10 px-4 py-3 rounded-xl border border-red-400/20">
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={14} />
+                  <div>{error || 'Error'}</div>
+                </div>
+                {errorDetails && (
+                  <div className="mt-2 text-[11px] text-red-200/80 font-mono break-words">
+                    {errorDetails}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* footer right: links */}
             <div className="mt-2">
               <FooterLinks />
             </div>
@@ -559,7 +570,6 @@ const App: React.FC = () => {
         </main>
       </div>
 
-      {/* Settings modal */}
       {isSettingsOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
