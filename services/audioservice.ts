@@ -6,6 +6,7 @@ export const createPcmBlob = (data: Float32Array): Blob => {
   return new Blob([pcm16.buffer], { type: 'audio/pcm' });
 };
 
+// הפונקציה שפותרת את בעיית השתיקה של האווטאר
 export const decodeAudioData = async (ctx: AudioContext, base64Data: string): Promise<AudioBuffer> => {
   const binaryString = atob(base64Data);
   const bytes = new Uint8Array(binaryString.length);
