@@ -1,13 +1,12 @@
-import React, { useCallback, useRef, useState, useEffect } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { Mic, MicOff, Headphones, LogOut, AlertCircle, Settings, X } from 'lucide-react';
+import { Mic, MicOff, Headphones, LogOut, AlertCircle } from 'lucide-react';
 
-// ייבוא מהקובץ types.ts שלך
 import { ConnectionStatus, SUPPORTED_LANGUAGES, SCENARIOS, Language, PracticeScenario } from './types';
 import { createPcmBlob, decodeAudioData } from './services/audioservice';
 import Avatar from './components/avatar';
 
-// ✅ זהו השם המדויק הנדרש עבור ה-Live API
+// ✅ שם המודל המדויק שנתמך ב-Live API (ללא סיומת -live או -002)
 const MODEL_NAME = 'models/gemini-1.5-flash';
 
 const App: React.FC = () => {
@@ -28,7 +27,7 @@ const App: React.FC = () => {
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
   const stopConversation = useCallback(() => {
-    // 1. ניתוק המיקרופון מיד כדי למנוע את הלופ האדום בקונסול
+    // עצירה מיידית של שליחת האודיו למניעת לופ שגיאות
     if (audioProcessorRef.current) {
       audioProcessorRef.current.disconnect();
       audioProcessorRef.current = null;
@@ -51,7 +50,7 @@ const App: React.FC = () => {
     const apiKey = (import.meta as any).env?.VITE_API_KEY || (import.meta as any).env?.API_KEY;
 
     if (!apiKey) {
-      setError('Missing API Key (VITE_API_KEY).');
+      setError('API Key חסר ב-Cloudflare. השתמש במפתח של פרויקט AI Translator live.');
       setStatus(ConnectionStatus.ERROR);
       return;
     }
@@ -71,7 +70,7 @@ const App: React.FC = () => {
       const session = await genAI.live.connect({
         model: MODEL_NAME,
         config: { 
-          systemInstruction: `You are a ${selectedScenario.title}. Native: ${nativeLang.name}, Target: ${targetLang.name}. Respond very briefly.` 
+          systemInstruction: `You are a ${selectedScenario.title}. Translate between ${nativeLang.name} and ${targetLang.name}.` 
         },
         callbacks: {
           onopen: () => {
@@ -81,7 +80,7 @@ const App: React.FC = () => {
             audioProcessorRef.current = proc;
             
             proc.onaudioprocess = (e) => {
-              // הגנה: שולח רק אם ה-WebSocket פתוח
+              // שולח רק אם החיבור פתוח באמת
               if (activeSessionRef.current && !isMuted) {
                 try {
                   activeSessionRef.current.sendRealtimeInput({ media: createPcmBlob(e.inputBuffer.getChannelData(0)) });
@@ -115,11 +114,11 @@ const App: React.FC = () => {
           },
           onerror: (e) => {
             console.error("Critical API Error:", e);
-            setError("Connection failed. Check if API Key matches a Paid Project.");
+            setError("Connection failed. Check your API project billing.");
             stopConversation();
           },
           onclose: (e) => {
-            if (e?.code === 1008) setError("Policy violation (1008): Project not on Paid Plan.");
+            if (e?.code === 1008) setError("Policy violation (1008): Project must be on a Paid Plan.");
             stopConversation();
           }
         }
@@ -137,15 +136,12 @@ const App: React.FC = () => {
       <aside className="w-80 bg-slate-900 p-6 border-r border-white/5 flex flex-col gap-6 hidden md:flex">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg"><Headphones className="text-white" /></div>
-          <h1 className="text-xl font-black tracking-tighter">LingoLive</h1>
+          <h1 className="text-xl font-black">LingoLive</h1>
         </div>
         <div className="space-y-4">
-          <div className="space-y-1">
-             <label className="text-[10px] text-slate-500 font-bold uppercase">Learning</label>
-             <select className="w-full bg-slate-950 border border-slate-700 p-2 rounded-lg text-xs" value={targetLang.code} onChange={e => setTargetLang(SUPPORTED_LANGUAGES.find(l => l.code === e.target.value)!)}>
-               {SUPPORTED_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
-             </select>
-          </div>
+          <select className="w-full bg-slate-950 border border-slate-700 p-2 rounded-lg text-xs" value={targetLang.code} onChange={e => setTargetLang(SUPPORTED_LANGUAGES.find(l => l.code === e.target.value)!)}>
+            {SUPPORTED_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
+          </select>
           <div className="pt-4 space-y-2">
             {SCENARIOS.map(s => (
               <button key={s.id} onClick={() => setSelectedScenario(s)} className={`w-full p-3 rounded-xl border text-left text-xs transition-all ${selectedScenario.id === s.id ? 'bg-indigo-600/20 border-indigo-500' : 'bg-slate-800/40 border-transparent hover:bg-slate-800'}`}>{s.icon} {s.title}</button>
