@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { Mic, MicOff, Headphones, LogOut, AlertCircle, Globe, Settings } from 'lucide-react';
-// שמות קבצים באותיות קטנות כפי שביקשת
+// ייבוא מקבצים באותיות קטנות כפי שהם שמורים ב-GitHub שלך
 import { decode, decodeAudioData, createPcmBlob } from './services/audioservice';
 import Avatar from './components/avatar';
 
@@ -10,20 +10,13 @@ type Scenario = { id: string; title: string; description: string; icon: string }
 enum ConnectionStatus { DISCONNECTED = 'DISCONNECTED', CONNECTING = 'CONNECTING', CONNECTED = 'CONNECTED', ERROR = 'ERROR' }
 
 const LANGUAGES: Language[] = [
-  { code: 'ar', name: 'Arabic', flag: '🇸🇦' },
-  { code: 'zh', name: 'Chinese (Mandarin)', flag: '🇨🇳' },
-  { code: 'en', name: 'English', flag: '🇺🇸' },
-  { code: 'fr', name: 'French', flag: '🇫🇷' },
-  { code: 'de', name: 'German', flag: '🇩🇪' },
-  { code: 'he', name: 'Hebrew', flag: '🇮🇱' },
-  { code: 'hi', name: 'Hindi', flag: '🇮🇳' },
-  { code: 'id', name: 'Indonesian', flag: '🇮🇩' },
-  { code: 'it', name: 'Italian', flag: '🇮🇹' },
-  { code: 'ja', name: 'Japanese', flag: '🇯🇵' },
-  { code: 'pt', name: 'Portuguese', flag: '🇵🇹' },
-  { code: 'ru', name: 'Russian', flag: '🇷🇺' },
-  { code: 'es', name: 'Spanish', flag: '🇪🇸' },
-  { code: 'tr', name: 'Turkish', flag: '🇹🇷' },
+  { code: 'ar', name: 'Arabic', flag: '🇸🇦' }, { code: 'zh', name: 'Chinese', flag: '🇨🇳' },
+  { code: 'en', name: 'English', flag: '🇺🇸' }, { code: 'fr', name: 'French', flag: '🇫🇷' },
+  { code: 'de', name: 'German', flag: '🇩🇪' }, { code: 'he', name: 'Hebrew', flag: '🇮🇱' },
+  { code: 'hi', name: 'Hindi', flag: '🇮🇳' }, { code: 'id', name: 'Indonesian', flag: '🇮🇩' },
+  { code: 'it', name: 'Italian', flag: '🇮🇹' }, { code: 'ja', name: 'Japanese', flag: '🇯🇵' },
+  { code: 'pt', name: 'Portuguese', flag: '🇵🇹' }, { code: 'ru', name: 'Russian', flag: '🇷🇺' },
+  { code: 'es', name: 'Spanish', flag: '🇪🇸' }, { code: 'tr', name: 'Turkish', flag: '🇹🇷' },
   { code: 'vi', name: 'Vietnamese', flag: '🇻🇳' },
 ];
 
@@ -42,61 +35,50 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   
-  const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
   const activeSessionRef = useRef<any>(null);
 
   const stopConversation = useCallback(() => {
-    if (activeSessionRef.current) {
-      try { activeSessionRef.current.close(); } catch (e) {}
-      activeSessionRef.current = null;
-    }
+    if (activeSessionRef.current) { try { activeSessionRef.current.close(); } catch (e) {} activeSessionRef.current = null; }
     setStatus(ConnectionStatus.DISCONNECTED);
     setIsSpeaking(false);
     nextStartTimeRef.current = 0;
   }, []);
 
   const startConversation = async () => {
-    // חשוב: הגדר VITE_API_KEY ב-Cloudflare dashboard
-    const apiKey = (import.meta as any).env?.VITE_API_KEY; 
-    if (!apiKey) {
-      setError('Failed to start: Missing VITE_API_KEY.');
-      setStatus(ConnectionStatus.ERROR);
-      return;
-    }
+    const apiKey = (import.meta as any).env?.VITE_API_KEY; // שימוש בנתיב Vite
+    if (!apiKey) { setError('Missing VITE_API_KEY in Cloudflare.'); setStatus(ConnectionStatus.ERROR); return; }
 
     try {
       setError(null);
       setStatus(ConnectionStatus.CONNECTING);
       const ai = new GoogleGenAI(apiKey);
-      
-      if (!inputAudioContextRef.current) inputAudioContextRef.current = new AudioContext({ sampleRate: 16000 });
       if (!outputAudioContextRef.current) outputAudioContextRef.current = new AudioContext({ sampleRate: 24000 });
       const outputCtx = outputAudioContextRef.current;
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const systemInstruction = `Mode: ${selectedScenario.title}. Native: ${nativeLang.name}, Target: ${targetLang.name}. Respond briefly via audio only.`;
+      const systemInstruction = `Mode: ${selectedScenario.title}. Translate between ${nativeLang.name} and ${targetLang.name}. Respond only via audio.`;
 
       const conn = await (ai as any).live.connect({
-        model: 'models/gemini-2.0-flash-exp',
+        model: 'models/gemini-2.0-flash-exp', // המודל היציב
         config: { systemInstruction: { parts: [{ text: systemInstruction }] } },
         callbacks: {
           onopen: () => {
             setStatus(ConnectionStatus.CONNECTED);
-            const source = inputAudioContextRef.current!.createMediaStreamSource(stream);
-            const processor = inputAudioContextRef.current!.createScriptProcessor(4096, 1, 1);
+            const inputCtx = new AudioContext({ sampleRate: 16000 });
+            const source = inputCtx.createMediaStreamSource(stream);
+            const processor = inputCtx.createScriptProcessor(4096, 1, 1);
             processor.onaudioprocess = (e) => {
               if (!isMuted && activeSessionRef.current) {
                 activeSessionRef.current.sendRealtimeInput({ media: createPcmBlob(e.inputBuffer.getChannelData(0)) });
               }
             };
             source.connect(processor);
-            processor.connect(inputAudioContextRef.current!.destination);
+            processor.connect(inputCtx.destination);
           },
           onmessage: async (m: any) => {
-            // התיקון הקריטי לשגיאת ה-JSON שראית
-            if (m instanceof Blob) return; 
+            if (m instanceof Blob) return; // ✅ התיקון שמונע את השגיאה בקונסול
             const audioData = m.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (audioData) {
               setIsSpeaking(true);
@@ -119,7 +101,7 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen bg-slate-950 flex flex-col md:flex-row text-slate-200 overflow-hidden">
-      <aside className="hidden md:flex w-80 bg-slate-900 border-r border-white/5 p-6 flex flex-col gap-6 z-20 shrink-0">
+      <aside className="w-full md:w-80 bg-slate-900 border-r border-white/5 p-6 flex flex-col gap-6 shrink-0 z-20">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg"><Headphones className="text-white" /></div>
           <h1 className="text-xl font-black italic tracking-tighter">LingoLive AI</h1>
@@ -134,8 +116,8 @@ const App: React.FC = () => {
               {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
             </select>
           </div>
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Training Mode</label>
           <div className="space-y-2 overflow-y-auto max-h-64 scrollbar-thin">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">Mode</label>
             {SCENARIOS.map(s => (
               <button key={s.id} onClick={() => setSelectedScenario(s)} className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${selectedScenario.id === s.id ? 'bg-indigo-600/20 border-indigo-500 text-white' : 'bg-slate-800/40 border-transparent hover:bg-slate-800 text-slate-400'}`}>
                 <span className="text-xl">{s.icon}</span>
@@ -153,7 +135,7 @@ const App: React.FC = () => {
                     <button onClick={() => setIsMuted(!isMuted)} className={`p-5 rounded-full border-2 transition-all ${isMuted ? 'bg-red-500 border-red-400' : 'bg-slate-800 border-slate-700'}`}>
                         {isMuted ? <MicOff size={24}/> : <Mic size={24}/>}
                     </button>
-                    <button onClick={stopConversation} className="bg-red-600 px-10 py-5 rounded-2xl font-black text-white shadow-xl hover:bg-red-700">STOP</button>
+                    <button onClick={stopConversation} className="bg-red-600 px-10 py-5 rounded-2xl font-black text-white shadow-xl hover:bg-red-700 transition">STOP</button>
                 </div>
             ) : (
                 <button onClick={startConversation} className="w-full bg-indigo-600 py-6 rounded-3xl font-black text-xl shadow-2xl hover:bg-indigo-500 active:scale-95 transition-all">
@@ -161,11 +143,9 @@ const App: React.FC = () => {
                 </button>
             )}
         </div>
-
         <Avatar state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'} />
-
         <div className="mt-8 text-center max-w-md px-4">
-          <h2 className="text-3xl font-black text-white tracking-tighter leading-tight">{isSpeaking ? 'Gemini Speaking' : status === ConnectionStatus.CONNECTED ? 'Listening...' : selectedScenario.title}</h2>
+          <h2 className="text-3xl md:text-5xl font-black text-white tracking-tighter">{isSpeaking ? 'Gemini Speaking' : status === ConnectionStatus.CONNECTED ? 'Listening...' : selectedScenario.title}</h2>
           <p className="text-slate-500 text-sm mt-2">{selectedScenario.description}</p>
         </div>
         {error && <div className="mt-4 text-red-400 text-xs bg-red-400/10 p-3 rounded-xl border border-red-400/20 flex items-center gap-2 shadow-lg"><AlertCircle size={14}/> {error}</div>}
