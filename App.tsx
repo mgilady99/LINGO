@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, Headphones, LogOut, AlertCircle, Settings, X, Globe, PanelLeftOpen } from 'lucide-react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
+import { Mic, MicOff, Headphones, LogOut, AlertCircle, Settings, Globe, PanelLeftOpen } from 'lucide-react';
 import Avatar from './components/avatar';
 import { decodeAudioData } from './services/audioservice';
 
-// Types
+// Constants
 type Language = { code: string; name: string; flag: string };
 type Scenario = { id: string; title: string; description: string; icon: string };
 enum ConnectionStatus { DISCONNECTED = 'DISCONNECTED', CONNECTING = 'CONNECTING', CONNECTED = 'CONNECTED', ERROR = 'ERROR' }
@@ -21,6 +21,7 @@ const SCENARIOS: Scenario[] = [
   { id: 'expert', title: 'Expert Tutor', description: 'Intensive practice.', icon: '🎯' },
 ];
 
+// מודל ה-Live הנתמך
 const LIVE_MODEL = 'models/gemini-2.0-flash-exp';
 
 const App: React.FC = () => {
@@ -29,7 +30,7 @@ const App: React.FC = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   
-  // ✅ 2 שדות שפה
+  // הגדרת 2 שפות
   const [targetLang, setTargetLang] = useState<Language>(LANGUAGES.find(l => l.code === 'en') || LANGUAGES[0]);
   const [nativeLang, setNativeLang] = useState<Language>(LANGUAGES.find(l => l.code === 'he') || LANGUAGES[0]);
   
@@ -74,7 +75,7 @@ const App: React.FC = () => {
           setup: {
             model: LIVE_MODEL,
             generation_config: { response_modalities: ["AUDIO"] },
-            system_instruction: { parts: [{ text: `You are a ${selectedScenario.title}. Native: ${nativeLang.name}, Target: ${targetLang.name}. Respond ONLY with audio.` }] }
+            system_instruction: { parts: [{ text: `Mode: ${selectedScenario.title}. Native: ${nativeLang.name}, Target: ${targetLang.name}. Respond briefly and naturally via audio.` }] }
           }
         }));
 
@@ -93,28 +94,39 @@ const App: React.FC = () => {
       };
 
       ws.onmessage = async (ev) => {
-        // ✅ טיפול בשגיאת ה-[object Blob] - מזהה אם הגיע מידע בינארי ומתעלם ממנו כדי לא לקרוס
+        // ✅ התיקון הקריטי: מתעלם מנתונים בינאריים כדי למנוע את השגיאה Unexpected token 'o'
         if (ev.data instanceof Blob) return;
+
         try {
           const msg = JSON.parse(ev.data);
           const audioBase64 = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+          
           if (audioBase64) {
             setIsSpeaking(true);
             const buffer = await decodeAudioData(outputCtx, audioBase64);
             const source = outputCtx.createBufferSource();
             source.buffer = buffer;
             source.connect(outputCtx.destination);
+            
+            // תזמון הניגון למניעת קפיצות בסאונד
             const startAt = Math.max(outputCtx.currentTime, nextStartTimeRef.current);
             source.start(startAt);
             nextStartTimeRef.current = startAt + buffer.duration;
-            source.onended = () => { if (outputCtx.currentTime >= nextStartTimeRef.current - 0.1) setIsSpeaking(false); };
+            
+            source.onended = () => {
+              if (outputCtx.currentTime >= nextStartTimeRef.current - 0.1) setIsSpeaking(false);
+            };
           }
-        } catch (e) {}
+        } catch (e) {
+          // שגיאות JSON נתפסות כאן ולא עוצרות את האפליקציה
+        }
       };
 
       ws.onclose = () => stopConversation();
-      ws.onerror = () => { setError('Connection error.'); stopConversation(); };
-    } catch (err) { setError('Mic access denied.'); setStatus(ConnectionStatus.ERROR); }
+    } catch (err) {
+      setError('Mic access denied.');
+      setStatus(ConnectionStatus.ERROR);
+    }
   }, [nativeLang, targetLang, selectedScenario, isMuted, stopConversation]);
 
   return (
@@ -127,7 +139,7 @@ const App: React.FC = () => {
         </div>
         <div className="space-y-6">
             <div className="space-y-2">
-               <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2"><Globe size={12}/> Your Languages</label>
+               <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2"><Globe size={12}/> Select Languages</label>
                <div className="space-y-2">
                  <div className="text-[9px] text-slate-400">Target</div>
                  <select value={targetLang.code} onChange={e => setTargetLang(LANGUAGES.find(l => l.code === e.target.value)!)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs">
@@ -151,38 +163,22 @@ const App: React.FC = () => {
 
       {/* MAIN VIEW */}
       <main className="flex-1 flex flex-col items-center p-4 md:p-10 relative overflow-y-auto">
-        <div className="md:hidden w-full flex justify-between items-center mb-8">
+        {/* Mobile Header */}
+        <div className="md:hidden w-full flex justify-between items-center mb-8 px-2">
           <h1 className="text-xl font-black italic">LingoLive</h1>
           <button onClick={() => setIsMobilePanelOpen(!isMobilePanelOpen)} className="bg-slate-800 px-4 py-2 rounded-xl text-xs font-bold border border-white/10 flex items-center gap-2">
             <PanelLeftOpen size={16}/> Settings
           </button>
         </div>
 
-        {/* ✅ Mobile Overlay Panel - כאן מופיעות 2 השפות במובייל */}
-        {isMobilePanelOpen && (
-          <div className="md:hidden absolute inset-x-0 top-16 z-50 p-6 bg-slate-900 border-b border-white/10 shadow-2xl space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div><div className="text-[9px] text-slate-400 mb-1">Learn</div>
-              <select value={targetLang.code} onChange={e => setTargetLang(LANGUAGES.find(l => l.code === e.target.value)!)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs">
-                {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
-              </select></div>
-              <div><div className="text-[9px] text-slate-400 mb-1">Native</div>
-              <select value={nativeLang.code} onChange={e => setNativeLang(LANGUAGES.find(l => l.code === e.target.value)!)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs">
-                {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
-              </select></div>
-            </div>
-            <button onClick={() => setIsMobilePanelOpen(false)} className="w-full py-3 bg-indigo-600 rounded-xl font-bold text-xs">Close Settings</button>
-          </div>
-        )}
-
-        {/* ✅ START/STOP BUTTON - מעל האווטאר */}
+        {/* ✅ START/STOP BUTTON - תמיד מעל האווטאר */}
         <div className="w-full max-w-xl mb-12 z-10">
             {status === ConnectionStatus.CONNECTED ? (
                 <div className="flex gap-4 justify-center">
-                    <button onClick={() => setIsMuted(!isMuted)} className={`px-8 py-4 rounded-3xl border-2 font-black flex items-center gap-3 shadow-xl ${isMuted ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-slate-800 border-slate-700'}`}>
+                    <button onClick={() => setIsMuted(!isMuted)} className={`px-8 py-4 rounded-3xl border-2 font-black flex items-center gap-3 shadow-xl ${isMuted ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-slate-800 border-slate-700 hover:border-indigo-500'}`}>
                         {isMuted ? <MicOff/> : <Mic/>} {isMuted ? 'OFF' : 'ON'}
                     </button>
-                    <button onClick={stopConversation} className="bg-red-600 px-10 py-4 rounded-3xl font-black text-white shadow-xl hover:bg-red-700">STOP</button>
+                    <button onClick={stopConversation} className="bg-red-600 px-10 py-4 rounded-3xl font-black text-white shadow-xl hover:bg-red-700 transition">STOP</button>
                 </div>
             ) : (
                 <button onClick={startConversation} className="w-full bg-indigo-600 py-6 rounded-3xl font-black text-xl shadow-2xl hover:bg-indigo-500 transition-all active:scale-95 flex justify-center items-center gap-3" disabled={status === ConnectionStatus.CONNECTING}>
@@ -192,13 +188,14 @@ const App: React.FC = () => {
         </div>
 
         {/* ✅ AVATAR - מתחת לכפתור */}
-        <div className="relative mb-10">
+        <div className="relative mb-10 group">
+           <div className={`absolute -inset-4 bg-indigo-500/10 rounded-full blur-2xl transition-opacity duration-1000 ${status === ConnectionStatus.CONNECTED ? 'opacity-100' : 'opacity-0'}`} />
            <Avatar state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'} />
         </div>
 
         <div className="text-center space-y-2 max-w-md px-4">
-          <h2 className="text-3xl md:text-5xl font-black tracking-tighter leading-none mb-2 text-white">
-            {isSpeaking ? 'Gemini Speaking' : status === ConnectionStatus.CONNECTED ? 'I am listening...' : selectedScenario.title}
+          <h2 className="text-3xl md:text-5xl font-black tracking-tighter leading-none mb-2">
+            {isSpeaking ? 'Gemini Speaking' : status === ConnectionStatus.CONNECTED ? 'Listening...' : selectedScenario.title}
           </h2>
           <p className="text-slate-500 text-sm md:text-base font-medium">{selectedScenario.description}</p>
           {error && <div className="mt-4 text-red-400 text-xs bg-red-400/10 p-4 rounded-2xl border border-red-400/20 flex items-center gap-3 justify-center shadow-lg"><AlertCircle size={18}/> {error}</div>}
