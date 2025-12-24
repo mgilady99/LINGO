@@ -14,14 +14,7 @@ import {
   Contrast,
 } from 'lucide-react';
 
-import {
-  ConnectionStatus,
-  SCENARIOS,
-  Language,
-  PracticeScenario,
-  TranscriptionEntry,
-} from './types';
-
+import { ConnectionStatus, SCENARIOS, Language, PracticeScenario, TranscriptionEntry } from './types';
 import { decode, decodeAudioData, createPcmBlob } from './services/audioservice';
 import Avatar from './components/avatar';
 import AudioVisualizer from './components/audiovisualizer';
@@ -59,13 +52,15 @@ const LANGUAGES_ABC: Language[] = [
 const App: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
 
-  const [targetLang, setTargetLang] = useState<Language>(() => LANGUAGES_ABC.find(l => l.code === 'en') || LANGUAGES_ABC[0]);
-  const [nativeLang, setNativeLang] = useState<Language>(() => LANGUAGES_ABC.find(l => l.code === 'he') || LANGUAGES_ABC[0]);
-  const [selectedScenario, setSelectedScenario] = useState<PracticeScenario>(() => SCENARIOS[1] as any);
+  const [targetLang, setTargetLang] = useState<Language>(() => LANGUAGES_ABC.find((l) => l.code === 'en') || LANGUAGES_ABC[0]);
+  const [nativeLang, setNativeLang] = useState<Language>(() => LANGUAGES_ABC.find((l) => l.code === 'he') || LANGUAGES_ABC[0]);
+  const [selectedScenario, setSelectedScenario] = useState<PracticeScenario>(() => (SCENARIOS[1] as any));
 
   const [isMuted, setIsMuted] = useState(false);
   const isMutedRef = useRef(isMuted);
-  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
 
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
@@ -85,13 +80,15 @@ const App: React.FC = () => {
 
   const [page, setPage] = useState<PageView>('main');
 
+  // DEBUG: להבין למה זה נסגר במובייל
+  const [lastEvent, setLastEvent] = useState<string>('—');
+
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const micStreamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
-
   const activeSessionRef = useRef<any>(null);
 
   // a11y load/save
@@ -122,7 +119,9 @@ const App: React.FC = () => {
 
   const stopConversation = useCallback(() => {
     if (activeSessionRef.current) {
-      try { activeSessionRef.current.close(); } catch {}
+      try {
+        activeSessionRef.current.close();
+      } catch {}
       activeSessionRef.current = null;
     }
 
@@ -132,11 +131,17 @@ const App: React.FC = () => {
     }
 
     if (processorRef.current) {
-      try { processorRef.current.disconnect(); } catch {}
+      try {
+        processorRef.current.disconnect();
+      } catch {}
       processorRef.current = null;
     }
 
-    sourcesRef.current.forEach((s) => { try { s.stop(); } catch {} });
+    sourcesRef.current.forEach((s) => {
+      try {
+        s.stop();
+      } catch {}
+    });
     sourcesRef.current.clear();
 
     nextStartTimeRef.current = 0;
@@ -146,7 +151,6 @@ const App: React.FC = () => {
 
   useEffect(() => () => stopConversation(), [stopConversation]);
 
-  // ✅ only decode if mimeType says it's audio
   const isAudioInline = (part: any) => {
     const mt = part?.inlineData?.mimeType || part?.inlineData?.mime_type || '';
     return typeof mt === 'string' && mt.toLowerCase().startsWith('audio/');
@@ -154,35 +158,39 @@ const App: React.FC = () => {
 
   const safeErr = (e: any) => {
     const msg = e?.message ? String(e.message) : String(e);
-    return msg.length > 200 ? msg.slice(0, 200) + '…' : msg;
+    return msg.length > 260 ? msg.slice(0, 260) + '…' : msg;
   };
 
   const startConversation = useCallback(async () => {
     setError(null);
     setErrorDetails(null);
+    setLastEvent('starting…');
 
     const apiKey = (import.meta as any).env?.VITE_API_KEY;
-
     if (!apiKey) {
       setError('Missing API Key. Please set VITE_API_KEY in Cloudflare Pages → Settings → Variables.');
       setStatus(ConnectionStatus.ERROR);
+      setLastEvent('ERROR: missing api key');
       return;
     }
 
     if (status === ConnectionStatus.CONNECTING || status === ConnectionStatus.CONNECTED) return;
-
     setStatus(ConnectionStatus.CONNECTING);
 
     try {
+      // חשוב במובייל: חייב להיות אחרי לחיצה (user gesture)
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
 
       if (!inputAudioContextRef.current) inputAudioContextRef.current = new AudioContext({ sampleRate: 16000 });
       if (!outputAudioContextRef.current) outputAudioContextRef.current = new AudioContext({ sampleRate: 24000 });
 
-      // ✅ fix Android/Chrome: contexts may start suspended
-      try { await inputAudioContextRef.current.resume(); } catch {}
-      try { await outputAudioContextRef.current.resume(); } catch {}
+      try {
+        await inputAudioContextRef.current.resume();
+      } catch {}
+      try {
+        await outputAudioContextRef.current.resume();
+      } catch {}
 
       const ai = new GoogleGenAI({ apiKey });
 
@@ -191,15 +199,15 @@ const App: React.FC = () => {
         ? `You are a professional real-time translator. Translate ${nativeLang.name} to ${targetLang.name} and vice versa. Speak ONLY the translation.`
         : `You are a patient and friendly ${targetLang.name} tutor. User's native language is ${nativeLang.name}. Scenario: ${(selectedScenario as any).title}. Correct errors gently and keep the conversation flowing.`;
 
-      // ⚠️ IMPORTANT:
-      // Use the SAME model your repo originally used (if different).
-      // If you had a working model earlier, put it here.
+      // 🔴 אם המודל לא נכון במובייל — הסשן יסגר מיד.
+      // אתה יכול גם להגדיר ב-Cloudflare משתנה: VITE_GEMINI_MODEL
       const MODEL_NAME = (import.meta as any).env?.VITE_GEMINI_MODEL || 'gemini-2.0-flash-live-001';
 
       const session = await ai.live.connect({
         model: MODEL_NAME,
         callbacks: {
           onopen: () => {
+            setLastEvent('OPEN ✅');
             setStatus(ConnectionStatus.CONNECTED);
 
             const inputCtx = inputAudioContextRef.current!;
@@ -217,6 +225,7 @@ const App: React.FC = () => {
               } catch (err: any) {
                 setError('Audio send error.');
                 setErrorDetails(safeErr(err));
+                setLastEvent('ERROR: sendRealtimeInput');
               }
             };
 
@@ -227,7 +236,11 @@ const App: React.FC = () => {
           onmessage: async (m: LiveServerMessage) => {
             try {
               if (m.serverContent?.interrupted) {
-                sourcesRef.current.forEach((src) => { try { src.stop(); } catch {} });
+                sourcesRef.current.forEach((src) => {
+                  try {
+                    src.stop();
+                  } catch {}
+                });
                 sourcesRef.current.clear();
                 nextStartTimeRef.current = 0;
                 setIsSpeaking(false);
@@ -260,22 +273,16 @@ const App: React.FC = () => {
               const parts = m.serverContent?.modelTurn?.parts || [];
               for (const part of parts as any[]) {
                 if (!part?.inlineData?.data) continue;
+                if (!isAudioInline(part)) continue;
 
-                // ✅ CRITICAL FIX: only decode if it's actually audio
-                if (!isAudioInline(part)) {
-                  continue;
-                }
-
-                const audioData = part.inlineData.data;
-
-                // In some SDK versions it can be base64 string, in others bytes-like
-                // Your decode() must match your services/audioservice implementation.
                 setIsSpeaking(true);
 
                 try {
-                  const pcm = decode(audioData);
+                  const pcm = decode(part.inlineData.data);
                   const outputCtx = outputAudioContextRef.current!;
-                  try { await outputCtx.resume(); } catch {}
+                  try {
+                    await outputCtx.resume();
+                  } catch {}
 
                   const audioBuffer = await decodeAudioData(outputCtx, pcm);
 
@@ -294,29 +301,30 @@ const App: React.FC = () => {
                     if (sourcesRef.current.size === 0) setIsSpeaking(false);
                   };
                 } catch (decodeErr: any) {
-                  // ✅ skip bad audio chunks instead of killing session
                   setError('Audio decode error (skipped chunk).');
                   setErrorDetails(safeErr(decodeErr));
+                  setLastEvent('ERROR: decode audio chunk');
                   setIsSpeaking(false);
                 }
               }
             } catch (err: any) {
-              console.error('onmessage error:', err);
               setError('Audio/session error.');
               setErrorDetails(safeErr(err));
+              setLastEvent('ERROR: onmessage');
               setIsSpeaking(false);
             }
           },
 
           onclose: () => {
+            setLastEvent('CLOSE ❌ (server closed)');
             setIsSpeaking(false);
             setStatus(ConnectionStatus.DISCONNECTED);
           },
 
           onerror: (e: any) => {
-            console.error('session error:', e);
             setError('Session error. Please try again.');
             setErrorDetails(safeErr(e));
+            setLastEvent('ERROR: onerror');
             setIsSpeaking(false);
             setStatus(ConnectionStatus.ERROR);
           },
@@ -330,8 +338,6 @@ const App: React.FC = () => {
 
       activeSessionRef.current = session;
     } catch (err: any) {
-      console.error('startConversation error:', err);
-
       const msg =
         err?.name === 'NotAllowedError'
           ? 'Microphone permission denied. Please allow microphone access and try again.'
@@ -339,24 +345,21 @@ const App: React.FC = () => {
 
       setError(msg);
       setErrorDetails(safeErr(err));
+      setLastEvent(`ERROR: startConversation (${err?.name || 'unknown'})`);
       setStatus(ConnectionStatus.ERROR);
       stopConversation();
     }
   }, [nativeLang.name, targetLang.name, selectedScenario, status, stopConversation]);
 
-  const fontScaleStyle: React.CSSProperties = useMemo(
-    () => ({ fontSize: `${a11y.fontScale * 100}%` }),
-    [a11y.fontScale]
-  );
+  const fontScaleStyle: React.CSSProperties = useMemo(() => ({ fontSize: `${a11y.fontScale * 100}%` }), [a11y.fontScale]);
 
   const rootClasses = useMemo(
     () =>
       [
-        'h-dvh',
+        'min-h-dvh',
         'w-dvw',
         'bg-slate-950',
         'text-slate-200',
-        'overflow-hidden',
         a11y.highContrast ? 'contrast-125 saturate-125' : '',
       ]
         .filter(Boolean)
@@ -369,12 +372,13 @@ const App: React.FC = () => {
 
   const FooterLinks = () => (
     <div className="flex items-center justify-center gap-4 text-[11px] text-slate-500">
-      <button onClick={() => setPage('privacy')} className="hover:text-slate-300">Privacy</button>
-      <button onClick={() => setPage('terms')} className="hover:text-slate-300">Terms</button>
-      <a
-        href={`mailto:${CONTACT_EMAIL}?subject=LingoLive%20Contact`}
-        className="hover:text-slate-300"
-      >
+      <button onClick={() => setPage('privacy')} className="hover:text-slate-300">
+        Privacy
+      </button>
+      <button onClick={() => setPage('terms')} className="hover:text-slate-300">
+        Terms
+      </button>
+      <a href={`mailto:${CONTACT_EMAIL}?subject=LingoLive%20Contact`} className="hover:text-slate-300">
         Contact
       </a>
     </div>
@@ -382,8 +386,9 @@ const App: React.FC = () => {
 
   const MainPage = () => (
     <div className={rootClasses} style={fontScaleStyle}>
-      <div className="h-full w-full flex flex-col md:flex-row overflow-hidden">
-        <aside className="w-full md:w-96 md:h-full bg-slate-900 border-r border-white/5 p-4 md:p-6 flex flex-col gap-4 overflow-hidden">
+      <div className="min-h-dvh w-full flex flex-col md:flex-row">
+        {/* Sidebar */}
+        <aside className="w-full md:w-96 bg-slate-900 border-b md:border-b-0 md:border-r border-white/5 p-4 md:p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
@@ -406,6 +411,7 @@ const App: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-3 gap-3 items-start">
+            {/* Languages 33% */}
             <div className="col-span-1 space-y-2">
               <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Languages</div>
 
@@ -446,6 +452,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {/* Modes 66% */}
             <div className="col-span-2 space-y-2">
               <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mode</div>
               <div className="space-y-2">
@@ -456,9 +463,7 @@ const App: React.FC = () => {
                     disabled={status !== ConnectionStatus.DISCONNECTED}
                     className={[
                       'w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all',
-                      selectedScenario?.id === s.id
-                        ? 'bg-indigo-600/20 border-indigo-500'
-                        : 'bg-slate-800/40 border-transparent hover:bg-slate-800',
+                      selectedScenario?.id === s.id ? 'bg-indigo-600/20 border-indigo-500' : 'bg-slate-800/40 border-transparent hover:bg-slate-800',
                     ].join(' ')}
                     aria-label={`Select mode ${s.title}`}
                   >
@@ -473,103 +478,98 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          <div className="mt-auto pt-3 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-500">
-            <div>© 2025 LingoLive</div>
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-2 rounded-xl border border-white/10 hover:bg-white/5"
-              aria-label="Open settings"
-              title="Settings"
-            >
-              <Settings size={16} />
-            </button>
+          {/* Footer moved DOWN so it won't hide START */}
+          <div className="mt-2 pt-3 border-t border-white/5 flex flex-col gap-2">
+            <div className="text-[10px] text-slate-500 text-center">Last event: {lastEvent}</div>
+            <div className="flex items-center justify-between text-[11px] text-slate-500">
+              <div>© 2025 LingoLive</div>
+              <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="p-2 rounded-xl border border-white/10 hover:bg-white/5"
+                aria-label="Open settings"
+                title="Settings"
+              >
+                <Settings size={16} />
+              </button>
+            </div>
           </div>
         </aside>
 
-        <main className="flex-1 h-full overflow-hidden flex flex-col">
-          <div className="relative flex-1 overflow-hidden flex flex-col items-center justify-center p-4 md:p-8 gap-4">
-            <div className="absolute top-4 right-4 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
-              <AudioVisualizer isActive={status === ConnectionStatus.CONNECTED && !isSpeaking && !isMuted} color="#10b981" />
-              <div
-                className={`w-2 h-2 rounded-full ${
-                  status === ConnectionStatus.CONNECTED ? 'bg-green-500 animate-pulse' : 'bg-slate-700'
-                }`}
-              />
-              <span className="text-[10px] font-black tracking-widest uppercase">{status}</span>
-            </div>
-
-            {status === ConnectionStatus.CONNECTED ? (
-              <div className="w-full max-w-xl flex items-center justify-center gap-3">
-                <button
-                  onClick={() => setIsMuted((m) => !m)}
-                  className={`px-5 py-3 rounded-2xl font-black flex items-center gap-2 border transition ${
-                    isMuted ? 'bg-red-500 border-red-400' : 'bg-slate-800 border-slate-700 hover:border-indigo-500'
-                  }`}
-                  aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-                >
-                  {isMuted ? <MicOff /> : <Mic />} {isMuted ? 'MIC MUTED' : 'MIC ON'}
-                </button>
-
-                <button
-                  onClick={stopConversation}
-                  className="bg-red-600 px-6 py-3 rounded-2xl font-black flex items-center gap-2 hover:bg-red-700 transition-colors"
-                  aria-label="Stop"
-                >
-                  <LogOut /> STOP
-                </button>
+        {/* Main */}
+        <main className="flex-1 flex flex-col">
+          {/* ✅ allow a LITTLE scroll on mobile so nothing is cut */}
+          <div className="flex-1 overflow-y-auto md:overflow-hidden px-4 md:px-8 py-4 md:py-8">
+            <div className="relative w-full h-full flex flex-col items-center justify-start md:justify-center gap-4 md:gap-6">
+              <div className="absolute top-4 right-4 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
+                <AudioVisualizer isActive={status === ConnectionStatus.CONNECTED && !isSpeaking && !isMuted} color="#10b981" />
+                <div className={`w-2 h-2 rounded-full ${status === ConnectionStatus.CONNECTED ? 'bg-green-500 animate-pulse' : 'bg-slate-700'}`} />
+                <span className="text-[10px] font-black tracking-widest uppercase">{status}</span>
               </div>
-            ) : (
-              <button
-                onClick={startConversation}
-                disabled={status === ConnectionStatus.CONNECTING}
-                className="w-full max-w-xl bg-indigo-600 px-6 py-4 rounded-3xl font-black flex items-center justify-center gap-3 text-lg shadow-2xl shadow-indigo-900/40 hover:bg-indigo-500 transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
-                aria-label="Start live session"
-              >
-                <Mic size={22} />
-                {status === ConnectionStatus.CONNECTING ? 'CONNECTING...' : 'START LIVE SESSION'}
-              </button>
-            )}
 
-            <div className="scale-[0.8] origin-top">
-              <Avatar
-                state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'}
-              />
-            </div>
+              {/* ✅ START always visible (top) */}
+              {status === ConnectionStatus.CONNECTED ? (
+                <div className="w-full max-w-xl flex items-center justify-center gap-3 mt-12 md:mt-0">
+                  <button
+                    onClick={() => setIsMuted((m) => !m)}
+                    className={`px-5 py-3 rounded-2xl font-black flex items-center gap-2 border transition ${
+                      isMuted ? 'bg-red-500 border-red-400' : 'bg-slate-800 border-slate-700 hover:border-indigo-500'
+                    }`}
+                    aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                  >
+                    {isMuted ? <MicOff /> : <Mic />} {isMuted ? 'MIC MUTED' : 'MIC ON'}
+                  </button>
 
-            <div className="text-center space-y-1">
-              <h2 className="text-2xl md:text-4xl font-black text-white tracking-tight">
-                {status === ConnectionStatus.CONNECTED
-                  ? isSpeaking
-                    ? 'Gemini is speaking'
-                    : 'Listening...'
-                  : (selectedScenario as any)?.title}
-              </h2>
-              <p className="text-slate-500 text-sm max-w-md mx-auto">
-                {(selectedScenario as any)?.description}
-              </p>
-            </div>
-
-            {(error || errorDetails) && (
-              <div className="max-w-xl w-full text-red-200 text-xs font-black bg-red-400/10 px-4 py-3 rounded-xl border border-red-400/20">
-                <div className="flex items-center gap-2">
-                  <AlertCircle size={14} />
-                  <div>{error || 'Error'}</div>
+                  <button
+                    onClick={stopConversation}
+                    className="bg-red-600 px-6 py-3 rounded-2xl font-black flex items-center gap-2 hover:bg-red-700 transition-colors"
+                    aria-label="Stop"
+                  >
+                    <LogOut /> STOP
+                  </button>
                 </div>
-                {errorDetails && (
-                  <div className="mt-2 text-[11px] text-red-200/80 font-mono break-words">
-                    {errorDetails}
-                  </div>
-                )}
-              </div>
-            )}
+              ) : (
+                <button
+                  onClick={startConversation}
+                  disabled={status === ConnectionStatus.CONNECTING}
+                  className="w-full max-w-xl bg-indigo-600 px-6 py-4 rounded-3xl font-black flex items-center justify-center gap-3 text-lg shadow-2xl shadow-indigo-900/40 hover:bg-indigo-500 transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed mt-12 md:mt-0"
+                  aria-label="Start live session"
+                >
+                  <Mic size={22} />
+                  {status === ConnectionStatus.CONNECTING ? 'CONNECTING...' : 'START LIVE SESSION'}
+                </button>
+              )}
 
-            <div className="mt-2">
+              {/* Avatar (visible on mobile) */}
+              <div className="scale-[0.8] md:scale-100 origin-top">
+                <Avatar state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'} />
+              </div>
+
+              <div className="text-center space-y-1">
+                <h2 className="text-2xl md:text-4xl font-black text-white tracking-tight">
+                  {status === ConnectionStatus.CONNECTED ? (isSpeaking ? 'Gemini is speaking' : 'Listening...') : (selectedScenario as any)?.title}
+                </h2>
+                <p className="text-slate-500 text-sm max-w-md mx-auto">{(selectedScenario as any)?.description}</p>
+              </div>
+
+              {(error || errorDetails) && (
+                <div className="max-w-xl w-full text-red-200 text-xs font-black bg-red-400/10 px-4 py-3 rounded-xl border border-red-400/20">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={14} />
+                    <div>{error || 'Error'}</div>
+                  </div>
+                  {errorDetails && <div className="mt-2 text-[11px] text-red-200/80 font-mono break-words">{errorDetails}</div>}
+                </div>
+              )}
+
+              {/* Bottom padding for safe-area so nothing gets hidden */}
+              <div className="pb-[calc(env(safe-area-inset-bottom)+18px)]" />
               <FooterLinks />
             </div>
           </div>
         </main>
       </div>
 
+      {/* Settings Modal */}
       {isSettingsOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
@@ -578,20 +578,13 @@ const App: React.FC = () => {
           aria-label="Settings"
           onClick={() => setIsSettingsOpen(false)}
         >
-          <div
-            className="w-full max-w-lg bg-slate-950 border border-white/10 rounded-2xl shadow-2xl p-5"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="w-full max-w-lg bg-slate-950 border border-white/10 rounded-2xl shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Accessibility />
                 <h3 className="text-lg font-black">Settings</h3>
               </div>
-              <button
-                className="p-2 rounded-xl hover:bg-white/5 border border-white/10"
-                onClick={() => setIsSettingsOpen(false)}
-                aria-label="Close settings"
-              >
+              <button className="p-2 rounded-xl hover:bg-white/5 border border-white/10" onClick={() => setIsSettingsOpen(false)} aria-label="Close settings">
                 <X size={18} />
               </button>
             </div>
@@ -601,21 +594,11 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div className="text-sm font-black">Text size</div>
                   <div className="flex items-center gap-2">
-                    <button
-                      className="p-2 rounded-xl border border-white/10 hover:bg-white/5"
-                      onClick={decFont}
-                      aria-label="Decrease text size"
-                    >
+                    <button className="p-2 rounded-xl border border-white/10 hover:bg-white/5" onClick={decFont} aria-label="Decrease text size">
                       <Minus size={16} />
                     </button>
-                    <div className="text-xs font-black w-16 text-center">
-                      {a11y.fontScale === 1 ? '100%' : a11y.fontScale === 1.15 ? '115%' : '130%'}
-                    </div>
-                    <button
-                      className="p-2 rounded-xl border border-white/10 hover:bg-white/5"
-                      onClick={incFont}
-                      aria-label="Increase text size"
-                    >
+                    <div className="text-xs font-black w-16 text-center">{a11y.fontScale === 1 ? '100%' : a11y.fontScale === 1.15 ? '115%' : '130%'}</div>
+                    <button className="p-2 rounded-xl border border-white/10 hover:bg-white/5" onClick={incFont} aria-label="Increase text size">
                       <Plus size={16} />
                     </button>
                   </div>
@@ -661,13 +644,19 @@ const App: React.FC = () => {
                 <div className="font-black text-sm mb-2">Links</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <button
-                    onClick={() => { setIsSettingsOpen(false); setPage('privacy'); }}
+                    onClick={() => {
+                      setIsSettingsOpen(false);
+                      setPage('privacy');
+                    }}
                     className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10"
                   >
                     Privacy
                   </button>
                   <button
-                    onClick={() => { setIsSettingsOpen(false); setPage('terms'); }}
+                    onClick={() => {
+                      setIsSettingsOpen(false);
+                      setPage('terms');
+                    }}
                     className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10"
                   >
                     Terms
@@ -682,10 +671,7 @@ const App: React.FC = () => {
               </div>
 
               <div className="flex justify-end">
-                <button
-                  onClick={() => setIsSettingsOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-black text-xs"
-                >
+                <button onClick={() => setIsSettingsOpen(false)} className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-black text-xs">
                   Done
                 </button>
               </div>
@@ -698,51 +684,42 @@ const App: React.FC = () => {
 
   const PrivacyPage = () => (
     <div className={rootClasses} style={fontScaleStyle}>
-      <div className="h-full w-full flex flex-col items-center justify-center p-6 text-slate-200">
+      <div className="min-h-dvh w-full flex flex-col items-center justify-center p-6 text-slate-200">
         <div className="w-full max-w-3xl bg-slate-900/60 border border-white/10 rounded-2xl p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-black">Privacy Policy</h1>
-            <button
-              onClick={() => setPage('main')}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 font-black text-xs"
-            >
+            <button onClick={() => setPage('main')} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 font-black text-xs">
               Back
             </button>
           </div>
           <p className="text-sm text-slate-300">
-            This app uses your microphone only after you click “Start Live Session”.
-            Audio is processed for the purpose of live translation / conversation.
+            This app uses your microphone only after you click “Start Live Session”. Audio is processed for the purpose of live translation / conversation.
           </p>
-          <p className="text-sm text-slate-300">
-            We do not sell personal data. If you have questions, contact: {CONTACT_EMAIL}
-          </p>
+          <p className="text-sm text-slate-300">We do not sell personal data. If you have questions, contact: {CONTACT_EMAIL}</p>
         </div>
-        <div className="mt-4"><FooterLinks /></div>
+        <div className="mt-4">
+          <FooterLinks />
+        </div>
       </div>
     </div>
   );
 
   const TermsPage = () => (
     <div className={rootClasses} style={fontScaleStyle}>
-      <div className="h-full w-full flex flex-col items-center justify-center p-6 text-slate-200">
+      <div className="min-h-dvh w-full flex flex-col items-center justify-center p-6 text-slate-200">
         <div className="w-full max-w-3xl bg-slate-900/60 border border-white/10 rounded-2xl p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-black">Terms</h1>
-            <button
-              onClick={() => setPage('main')}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 font-black text-xs"
-            >
+            <button onClick={() => setPage('main')} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 font-black text-xs">
               Back
             </button>
           </div>
-          <p className="text-sm text-slate-300">
-            By using this app, you agree to use it responsibly. Do not use it for illegal activity.
-          </p>
-          <p className="text-sm text-slate-300">
-            The service is provided “as is”, without warranties. If you need support contact: {CONTACT_EMAIL}
-          </p>
+          <p className="text-sm text-slate-300">By using this app, you agree to use it responsibly. Do not use it for illegal activity.</p>
+          <p className="text-sm text-slate-300">The service is provided “as is”, without warranties. If you need support contact: {CONTACT_EMAIL}</p>
         </div>
-        <div className="mt-4"><FooterLinks /></div>
+        <div className="mt-4">
+          <FooterLinks />
+        </div>
       </div>
     </div>
   );
