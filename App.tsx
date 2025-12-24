@@ -1,22 +1,30 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { Mic, MicOff, Headphones, LogOut, AlertCircle, Globe, Settings } from 'lucide-react';
-// ייבוא מקבצים באותיות קטנות כפי שהם שמורים ב-GitHub שלך
+// וודא ששם הקובץ בגיט הוא audioservice.ts באותיות קטנות
 import { decode, decodeAudioData, createPcmBlob } from './services/audioservice';
 import Avatar from './components/avatar';
 
+// --- Configuration ---
 type Language = { code: string; name: string; flag: string };
 type Scenario = { id: string; title: string; description: string; icon: string };
 enum ConnectionStatus { DISCONNECTED = 'DISCONNECTED', CONNECTING = 'CONNECTING', CONNECTED = 'CONNECTED', ERROR = 'ERROR' }
 
 const LANGUAGES: Language[] = [
-  { code: 'ar', name: 'Arabic', flag: '🇸🇦' }, { code: 'zh', name: 'Chinese', flag: '🇨🇳' },
-  { code: 'en', name: 'English', flag: '🇺🇸' }, { code: 'fr', name: 'French', flag: '🇫🇷' },
-  { code: 'de', name: 'German', flag: '🇩🇪' }, { code: 'he', name: 'Hebrew', flag: '🇮🇱' },
-  { code: 'hi', name: 'Hindi', flag: '🇮🇳' }, { code: 'id', name: 'Indonesian', flag: '🇮🇩' },
-  { code: 'it', name: 'Italian', flag: '🇮🇹' }, { code: 'ja', name: 'Japanese', flag: '🇯🇵' },
-  { code: 'pt', name: 'Portuguese', flag: '🇵🇹' }, { code: 'ru', name: 'Russian', flag: '🇷🇺' },
-  { code: 'es', name: 'Spanish', flag: '🇪🇸' }, { code: 'tr', name: 'Turkish', flag: '🇹🇷' },
+  { code: 'ar', name: 'Arabic', flag: '🇸🇦' },
+  { code: 'zh', name: 'Chinese (Mandarin)', flag: '🇨🇳' },
+  { code: 'en', name: 'English', flag: '🇺🇸' },
+  { code: 'fr', name: 'French', flag: '🇫🇷' },
+  { code: 'de', name: 'German', flag: '🇩🇪' },
+  { code: 'he', name: 'Hebrew', flag: '🇮🇱' },
+  { code: 'hi', name: 'Hindi', flag: '🇮🇳' },
+  { code: 'id', name: 'Indonesian', flag: '🇮🇩' },
+  { code: 'it', name: 'Italian', flag: '🇮🇹' },
+  { code: 'ja', name: 'Japanese', flag: '🇯🇵' },
+  { code: 'pt', name: 'Portuguese', flag: '🇵🇹' },
+  { code: 'ru', name: 'Russian', flag: '🇷🇺' },
+  { code: 'es', name: 'Spanish', flag: '🇪🇸' },
+  { code: 'tr', name: 'Turkish', flag: '🇹🇷' },
   { code: 'vi', name: 'Vietnamese', flag: '🇻🇳' },
 ];
 
@@ -40,28 +48,36 @@ const App: React.FC = () => {
   const activeSessionRef = useRef<any>(null);
 
   const stopConversation = useCallback(() => {
-    if (activeSessionRef.current) { try { activeSessionRef.current.close(); } catch (e) {} activeSessionRef.current = null; }
+    if (activeSessionRef.current) {
+      try { activeSessionRef.current.close(); } catch (e) {}
+      activeSessionRef.current = null;
+    }
     setStatus(ConnectionStatus.DISCONNECTED);
     setIsSpeaking(false);
     nextStartTimeRef.current = 0;
   }, []);
 
   const startConversation = async () => {
-    const apiKey = (import.meta as any).env?.VITE_API_KEY; // שימוש בנתיב Vite
-    if (!apiKey) { setError('Missing VITE_API_KEY in Cloudflare.'); setStatus(ConnectionStatus.ERROR); return; }
+    const apiKey = (import.meta as any).env?.VITE_API_KEY; 
+    if (!apiKey) {
+      setError('Missing VITE_API_KEY in Cloudflare settings.');
+      setStatus(ConnectionStatus.ERROR);
+      return;
+    }
 
     try {
       setError(null);
       setStatus(ConnectionStatus.CONNECTING);
       const ai = new GoogleGenAI(apiKey);
+      
       if (!outputAudioContextRef.current) outputAudioContextRef.current = new AudioContext({ sampleRate: 24000 });
       const outputCtx = outputAudioContextRef.current;
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const systemInstruction = `Mode: ${selectedScenario.title}. Translate between ${nativeLang.name} and ${targetLang.name}. Respond only via audio.`;
+      const systemInstruction = `Mode: ${selectedScenario.title}. Translate between ${nativeLang.name} and ${targetLang.name}. Respond only with audio content.`;
 
       const conn = await (ai as any).live.connect({
-        model: 'models/gemini-2.0-flash-exp', // המודל היציב
+        model: 'models/gemini-2.0-flash-exp',
         config: { systemInstruction: { parts: [{ text: systemInstruction }] } },
         callbacks: {
           onopen: () => {
@@ -78,7 +94,7 @@ const App: React.FC = () => {
             processor.connect(inputCtx.destination);
           },
           onmessage: async (m: any) => {
-            if (m instanceof Blob) return; // ✅ התיקון שמונע את השגיאה בקונסול
+            if (m instanceof Blob) return; // ✅ פתרון לשגיאת ה-JSON
             const audioData = m.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (audioData) {
               setIsSpeaking(true);
@@ -92,11 +108,11 @@ const App: React.FC = () => {
               source.onended = () => { if (outputCtx.currentTime >= nextStartTimeRef.current - 0.1) setIsSpeaking(false); };
             }
           },
-          onerror: () => { setError('Lost connection.'); stopConversation(); }
+          onerror: () => { setError('Connection lost.'); stopConversation(); }
         }
       });
       activeSessionRef.current = conn;
-    } catch (e) { setError('Failed to start session.'); setStatus(ConnectionStatus.ERROR); }
+    } catch (e) { setError('Failed to connect.'); setStatus(ConnectionStatus.ERROR); }
   };
 
   return (
@@ -107,7 +123,7 @@ const App: React.FC = () => {
           <h1 className="text-xl font-black italic tracking-tighter">LingoLive AI</h1>
         </div>
         <div className="space-y-4">
-          <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2"><Globe size={12}/> Languages</label>
+          <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2"><Globe size={12} /> Languages</label>
           <div className="p-4 bg-slate-800/40 rounded-2xl border border-white/5 space-y-4">
             <select value={targetLang.code} onChange={e => setTargetLang(LANGUAGES.find(l => l.code === e.target.value)!)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs outline-none">
               {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
@@ -138,7 +154,7 @@ const App: React.FC = () => {
                     <button onClick={stopConversation} className="bg-red-600 px-10 py-5 rounded-2xl font-black text-white shadow-xl hover:bg-red-700 transition">STOP</button>
                 </div>
             ) : (
-                <button onClick={startConversation} className="w-full bg-indigo-600 py-6 rounded-3xl font-black text-xl shadow-2xl hover:bg-indigo-500 active:scale-95 transition-all">
+                <button onClick={startConversation} className="w-full bg-indigo-600 py-6 rounded-3xl font-black text-xl shadow-2xl shadow-indigo-900/40 hover:bg-indigo-500 active:scale-95 transition-all">
                   {status === ConnectionStatus.CONNECTING ? 'CONNECTING...' : 'START LIVE SESSION'}
                 </button>
             )}
