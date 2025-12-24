@@ -1,11 +1,10 @@
-import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage } from '@google/genai';
 import {
   Mic,
   MicOff,
   Headphones,
   LogOut,
-  MessageSquare,
   AlertCircle,
   Settings,
   X,
@@ -14,7 +13,9 @@ import {
   Plus,
   Contrast,
   MousePointer2,
+  Menu,
 } from 'lucide-react';
+
 import {
   ConnectionStatus,
   SUPPORTED_LANGUAGES,
@@ -24,7 +25,6 @@ import {
   TranscriptionEntry,
 } from './types';
 
-// keep your repo casing:
 import { decode, decodeAudioData, createPcmBlob } from './services/audioservice';
 import Avatar from './components/avatar';
 import TranscriptItem from './components/transcriptitem';
@@ -40,27 +40,20 @@ type A11yPrefs = {
 const A11Y_STORAGE_KEY = 'lingolive_a11y_v1';
 const CONTACT_EMAIL = 'callilcoil@gmail.com';
 
-type PageView = 'main' | 'privacy' | 'terms';
-
-function detectPage(): PageView {
-  const p = window.location.pathname.toLowerCase();
-  if (p.startsWith('/privacy')) return 'privacy';
-  if (p.startsWith('/terms')) return 'terms';
-  return 'main';
-}
-
 const App: React.FC = () => {
-  const [page, setPage] = useState<PageView>(() => detectPage());
-
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
   const [targetLang, setTargetLang] = useState<Language>(SUPPORTED_LANGUAGES[0]);
   const [nativeLang, setNativeLang] = useState<Language>(SUPPORTED_LANGUAGES[1]);
-  const [selectedScenario, setSelectedScenario] = useState<PracticeScenario>(SCENARIOS[1]);
+  const [selectedScenario, setSelectedScenario] = useState<PracticeScenario>(SCENARIOS[0]);
   const [isMuted, setIsMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptionEntry[]>([]);
 
+  // Mobile panel (languages + mode + transcript)
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+
+  // Settings modal
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [a11y, setA11y] = useState<A11yPrefs>({
     fontScale: 1,
@@ -80,58 +73,47 @@ const App: React.FC = () => {
   const currentInputTranscriptionRef = useRef('');
   const currentOutputTranscriptionRef = useRef('');
 
-  // stale closure fix
   const isMutedRef = useRef(isMuted);
   useEffect(() => {
     isMutedRef.current = isMuted;
   }, [isMuted]);
 
-  // SPA-like nav for /privacy /terms (Cloudflare Pages)
-  useEffect(() => {
-    const onPop = () => setPage(detectPage());
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
-
-  const go = (path: '/privacy' | '/terms' | '/') => {
-    window.history.pushState({}, '', path);
-    setPage(detectPage());
-    // scroll to top within app
-  };
-
-  // Load a11y prefs
+  // Load A11y prefs
   useEffect(() => {
     try {
       const saved = localStorage.getItem(A11Y_STORAGE_KEY);
       if (saved) setA11y(JSON.parse(saved));
     } catch {}
   }, []);
-  // Save a11y prefs
+
+  // Save A11y prefs
   useEffect(() => {
     try {
       localStorage.setItem(A11Y_STORAGE_KEY, JSON.stringify(a11y));
     } catch {}
   }, [a11y]);
 
-  // Reduce motion
   useEffect(() => {
     if (a11y.reduceMotion) document.documentElement.classList.add('motion-reduce');
     else document.documentElement.classList.remove('motion-reduce');
   }, [a11y.reduceMotion]);
 
-  // ESC closes settings
+  // ESC closes modals/panels
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsSettingsOpen(false);
+      if (e.key === 'Escape') {
+        setIsSettingsOpen(false);
+        setIsPanelOpen(false);
+      }
     };
-    if (isSettingsOpen) window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isSettingsOpen]);
+  }, []);
 
-  // Auto-scroll transcript box only
+  // Auto-scroll transcript area only (when open + changes)
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [transcript]);
+  }, [transcript, isPanelOpen]);
 
   const stopConversation = useCallback(() => {
     if (activeSessionRef.current) {
@@ -166,7 +148,7 @@ const App: React.FC = () => {
     const apiKey = (import.meta as any).env?.VITE_API_KEY || (import.meta as any).env?.API_KEY;
 
     if (!apiKey) {
-      setError('Missing API Key. Set VITE_API_KEY in Cloudflare Pages → Settings → Variables.');
+      setError('Missing API Key. Set VITE_API_KEY in Cloudflare Pages Variables and redeploy.');
       setStatus(ConnectionStatus.ERROR);
       return;
     }
@@ -183,19 +165,16 @@ const App: React.FC = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
 
-      const outputCtx = outputAudioContextRef.current;
-      const outputNode = outputCtx.createGain();
-      outputNode.connect(outputCtx.destination);
-
-      let systemInstruction = '';
-      if ((selectedScenario as any).id === 'translator') {
-        systemInstruction = `You are a professional real-time translator. Translate ${nativeLang.name} to ${targetLang.name} and vice versa. Speak ONLY the translation. Provide clear and natural speech.`;
-      } else {
-        systemInstruction = `You are a patient and friendly ${targetLang.name} tutor. User's native language is ${nativeLang.name}. Scenario: ${(selectedScenario as any).title}. Correct errors gently in the chat and keep the conversation flowing.`;
-      }
+      const systemInstruction =
+        selectedScenario.id === 'translator'
+          ? `You are a professional real-time translator. Translate ${nativeLang.name} to ${targetLang.name} and vice versa. Speak ONLY the translation.`
+          : `You are a patient and friendly ${targetLang.name} tutor. User's native language is ${nativeLang.name}. Scenario: ${selectedScenario.title}. Keep it short and helpful.`;
 
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        config: {
+          systemInstruction,
+        } as any,
         callbacks: {
           onopen: () => {
             setStatus(ConnectionStatus.CONNECTED);
@@ -218,9 +197,9 @@ const App: React.FC = () => {
 
           onmessage: async (m: LiveServerMessage) => {
             if (m.serverContent?.interrupted) {
-              sourcesRef.current.forEach((source) => {
+              sourcesRef.current.forEach((src) => {
                 try {
-                  source.stop();
+                  src.stop();
                 } catch {}
               });
               sourcesRef.current.clear();
@@ -228,26 +207,19 @@ const App: React.FC = () => {
               setIsSpeaking(false);
             }
 
-            if (m.serverContent?.inputTranscription) {
-              currentInputTranscriptionRef.current += m.serverContent.inputTranscription.text;
-            }
-            if (m.serverContent?.outputTranscription) {
-              currentOutputTranscriptionRef.current += m.serverContent.outputTranscription.text;
-            }
+            if (m.serverContent?.inputTranscription) currentInputTranscriptionRef.current += m.serverContent.inputTranscription.text;
+            if (m.serverContent?.outputTranscription) currentOutputTranscriptionRef.current += m.serverContent.outputTranscription.text;
 
             if (m.serverContent?.turnComplete) {
-              if (currentInputTranscriptionRef.current) {
-                setTranscript((prev) => [
-                  ...prev,
-                  { role: 'user', text: currentInputTranscriptionRef.current, timestamp: new Date() } as any,
-                ]);
+              const inText = currentInputTranscriptionRef.current.trim();
+              const outText = currentOutputTranscriptionRef.current.trim();
+
+              if (inText) {
+                setTranscript((prev) => [...prev, { role: 'user', text: inText, timestamp: new Date() } as any]);
                 currentInputTranscriptionRef.current = '';
               }
-              if (currentOutputTranscriptionRef.current) {
-                setTranscript((prev) => [
-                  ...prev,
-                  { role: 'model', text: currentOutputTranscriptionRef.current, timestamp: new Date() } as any,
-                ]);
+              if (outText) {
+                setTranscript((prev) => [...prev, { role: 'model', text: outText, timestamp: new Date() } as any]);
                 currentOutputTranscriptionRef.current = '';
               }
             }
@@ -255,254 +227,113 @@ const App: React.FC = () => {
             const parts = m.serverContent?.modelTurn?.parts || [];
             for (const part of parts) {
               if (part.inlineData?.data) {
+                setIsSpeaking(true);
                 const audioData = part.inlineData.data;
 
-                try {
-                  const pcm = decode(audioData);
-                  const audioBuffer = await decodeAudioData(outputCtx, pcm, 24000);
+                const pcm = decode(audioData);
+                const audioBuffer = await decodeAudioData(outputAudioContextRef.current!, pcm);
 
-                  const source = outputCtx.createBufferSource();
-                  source.buffer = audioBuffer;
-                  source.connect(outputNode);
+                const source = outputAudioContextRef.current!.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(outputAudioContextRef.current!.destination);
 
-                  const now = outputCtx.currentTime;
-                  const startTime = Math.max(now, nextStartTimeRef.current);
-                  source.start(startTime);
+                const now = outputAudioContextRef.current!.currentTime;
+                const startAt = Math.max(now, nextStartTimeRef.current);
+                source.start(startAt);
+                nextStartTimeRef.current = startAt + audioBuffer.duration;
 
-                  sourcesRef.current.add(source);
-                  source.onended = () => sourcesRef.current.delete(source);
-
-                  nextStartTimeRef.current = startTime + audioBuffer.duration;
-
-                  setIsSpeaking(true);
-                  window.setTimeout(() => {
-                    if (outputCtx.currentTime >= nextStartTimeRef.current - 0.05) setIsSpeaking(false);
-                  }, Math.max(50, audioBuffer.duration * 1000));
-                } catch (e) {
-                  console.error('Audio decode/play error', e);
-                }
+                sourcesRef.current.add(source);
+                source.onended = () => {
+                  sourcesRef.current.delete(source);
+                  if (sourcesRef.current.size === 0) setIsSpeaking(false);
+                };
               }
             }
           },
 
-          onclose: () => {
-            setStatus(ConnectionStatus.DISCONNECTED);
-            setIsSpeaking(false);
-          },
-
-          onerror: (e: any) => {
-            console.error('Session error:', e);
-            setError('Connection error. Please try again.');
+          onclose: () => stopConversation(),
+          onerror: () => {
+            setError('Connection error.');
             setStatus(ConnectionStatus.ERROR);
             stopConversation();
           },
-        },
-        config: {
-          systemInstruction,
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-          } as any,
         },
       });
 
       const session = await sessionPromise;
       activeSessionRef.current = session;
+
+      // Close mobile panel when session starts (so user sees avatar+controls)
+      setIsPanelOpen(false);
     } catch (e: any) {
       console.error(e);
-      setError(e?.message || 'Failed to start session');
+      setError(e?.message || 'Failed to start.');
       setStatus(ConnectionStatus.ERROR);
       stopConversation();
     }
   };
 
-  const fontScaleStyle: React.CSSProperties = useMemo(
-    () => ({ fontSize: `${a11y.fontScale * 100}%` }),
-    [a11y.fontScale]
-  );
+  const fontScaleStyle: React.CSSProperties = { fontSize: `${a11y.fontScale * 100}%` };
+  const rootClasses = [
+    'h-dvh w-dvw overflow-hidden bg-slate-950 text-slate-200',
+    a11y.highContrast ? 'contrast-125 saturate-125' : '',
+  ].join(' ');
 
-  const rootClasses = useMemo(() => {
-    return [
-      'h-dvh w-dvw overflow-hidden',
-      'bg-slate-950 text-slate-200',
-      'flex flex-col md:flex-row',
-      a11y.highContrast ? 'contrast-125 saturate-125' : '',
-    ]
-      .filter(Boolean)
-      .join(' ');
-  }, [a11y.highContrast]);
-
-  const incFont = () => {
+  const incFont = () =>
     setA11y((p) => ({ ...p, fontScale: p.fontScale === 1 ? 1.15 : p.fontScale === 1.15 ? 1.3 : 1.3 }));
-  };
-  const decFont = () => {
+  const decFont = () =>
     setA11y((p) => ({ ...p, fontScale: p.fontScale === 1.3 ? 1.15 : p.fontScale === 1.15 ? 1 : 1 }));
-  };
 
-  const ScenarioBar = () => (
-    <div className="flex gap-2 w-full">
-      {SCENARIOS.map((s) => {
-        const active = (selectedScenario as any).id === (s as any).id;
-        return (
-          <button
-            key={(s as any).id}
-            onClick={() => setSelectedScenario(s)}
-            disabled={status !== ConnectionStatus.DISCONNECTED}
-            className={[
-              'flex-1',
-              'px-3 py-3 rounded-xl',
-              'border text-left transition',
-              active ? 'bg-indigo-600/20 border-indigo-500' : 'bg-slate-900/40 border-white/10 hover:bg-slate-800/60',
-            ].join(' ')}
-            aria-label={`Select mode ${(s as any).title}`}
-          >
-            <div className="text-[11px] font-black leading-4">{(s as any).title}</div>
-            <div className="text-[10px] text-slate-500 leading-4 line-clamp-1">{(s as any).description}</div>
-          </button>
-        );
-      })}
-    </div>
-  );
-
-  const RightFooter = () => (
-    <div className="w-full flex items-center justify-between gap-3 px-4 py-3 border-t border-white/5 bg-slate-950/40">
-      <div className="flex items-center gap-3 text-[11px] text-slate-400">
-        <button
-          onClick={() => go('/privacy')}
-          className="hover:text-slate-200 transition"
-          aria-label="Privacy"
-        >
-          Privacy
-        </button>
-        <span className="opacity-40">•</span>
-        <button
-          onClick={() => go('/terms')}
-          className="hover:text-slate-200 transition"
-          aria-label="Terms"
-        >
-          Terms
-        </button>
-        <span className="opacity-40">•</span>
-        <a
-          href={`mailto:${CONTACT_EMAIL}?subject=LingoLive%20Contact`}
-          className="hover:text-slate-200 transition"
-          aria-label="Contact"
-        >
-          Contact
-        </a>
-      </div>
-
-      {/* SETTINGS moved to bottom-right next to contact */}
-      <button
-        onClick={() => setIsSettingsOpen(true)}
-        className="p-2 rounded-xl border border-white/10 bg-slate-900/40 hover:bg-slate-800/60 transition"
-        aria-label="Open settings"
-        title="Settings"
-      >
-        <Settings size={18} />
-      </button>
-    </div>
-  );
-
-  const LeftFooter = () => (
-    <div className="mt-auto pt-4 border-t border-white/5 text-[11px] text-slate-500 flex items-center gap-2 justify-between">
-      <span>© 2025 LingoLive</span>
-      <span className="inline-flex items-center gap-1 opacity-80">
-        <Headphones size={14} /> LINGOLIVE
-      </span>
-    </div>
-  );
-
-  // --- Privacy / Terms simple pages (no extra files needed)
-  if (page === 'privacy') {
-    return (
-      <div className="min-h-screen bg-slate-950 text-slate-200 p-6">
-        <div className="max-w-3xl mx-auto space-y-6">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-black">Privacy Policy</h1>
-            <button
-              onClick={() => go('/')}
-              className="px-4 py-2 rounded-xl bg-slate-900 border border-white/10 hover:bg-slate-800"
-            >
-              Back
-            </button>
-          </div>
-          <div className="text-sm text-slate-300 space-y-3">
-            <p>
-              LingoLive is a language practice app. We do not sell personal data.
-            </p>
-            <p>
-              Voice audio is used only to provide the live session functionality. Your settings (like accessibility preferences)
-              may be stored locally in your browser.
-            </p>
-            <p>
-              Contact: <a className="underline" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (page === 'terms') {
-    return (
-      <div className="min-h-screen bg-slate-950 text-slate-200 p-6">
-        <div className="max-w-3xl mx-auto space-y-6">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-black">Terms of Service</h1>
-            <button
-              onClick={() => go('/')}
-              className="px-4 py-2 rounded-xl bg-slate-900 border border-white/10 hover:bg-slate-800"
-            >
-              Back
-            </button>
-          </div>
-          <div className="text-sm text-slate-300 space-y-3">
-            <p>
-              By using LingoLive you agree to use it responsibly and comply with local laws.
-            </p>
-            <p>
-              Service is provided “as is” with no warranties. You are responsible for your own usage and any content you generate.
-            </p>
-            <p>
-              Contact: <a className="underline" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // --- MAIN APP UI
   return (
     <div className={rootClasses} style={fontScaleStyle}>
-      {/* LEFT PANEL */}
-      <aside className="w-full md:w-96 shrink-0 h-full bg-slate-900 border-r border-white/5 p-4 md:p-6 flex flex-col gap-5 overflow-hidden">
-        {/* Header */}
+      {/* Top bar (always visible in mobile + web) */}
+      <header className="h-14 md:h-16 px-4 md:px-6 flex items-center justify-between border-b border-white/5 bg-slate-950/70 backdrop-blur">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
             <Headphones className="text-white" />
           </div>
-          <div className="flex-1">
-            <div className="text-xl font-black leading-5">LingoLive</div>
-            <div className="text-[11px] text-slate-500">Language practice & live translation</div>
+          <div className="leading-tight">
+            <div className="font-black">LingoLive</div>
+            <div className="text-[10px] text-slate-400">language practice & live translation</div>
           </div>
         </div>
 
-        {/* TOP GRID: Languages (33%) + Modes (67%) */}
-        <div className="w-full flex gap-3 items-stretch">
-          {/* Languages: 33% */}
-          <div className="w-1/3 min-w-[150px] space-y-2">
-            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Languages</div>
+        <div className="flex items-center gap-2">
+          {/* Mobile panel button */}
+          <button
+            onClick={() => setIsPanelOpen(true)}
+            className="md:hidden p-2 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800/60 transition"
+            aria-label="Open menu"
+          >
+            <Menu size={18} />
+          </button>
 
-            <div className="space-y-2">
+          {/* Settings */}
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800/60 transition"
+            aria-label="Open settings"
+          >
+            <Settings size={18} />
+          </button>
+        </div>
+      </header>
+
+      {/* Main app body */}
+      <div className="h-[calc(100dvh-56px)] md:h-[calc(100dvh-64px)] flex overflow-hidden">
+        {/* Desktop sidebar (only on md+) */}
+        <aside className="hidden md:flex w-80 h-full bg-slate-900 border-r border-white/5 p-5 flex-col gap-5 overflow-hidden">
+          {/* Languages (2 selects) */}
+          <div className="space-y-2">
+            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Languages</div>
+            <div className="p-3 bg-slate-800/40 rounded-2xl border border-white/5 space-y-3">
               <div className="space-y-1">
                 <div className="text-[10px] text-slate-400">Learn</div>
                 <select
                   value={targetLang.code}
                   onChange={(e) => setTargetLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
                   disabled={status !== ConnectionStatus.DISCONNECTED}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-2 text-[11px] focus:ring-2 focus:ring-indigo-500 outline-none"
-                  aria-label="Select learning language"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
                 >
                   {SUPPORTED_LANGUAGES.map((l) => (
                     <option key={l.code} value={l.code}>
@@ -518,8 +349,7 @@ const App: React.FC = () => {
                   value={nativeLang.code}
                   onChange={(e) => setNativeLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
                   disabled={status !== ConnectionStatus.DISCONNECTED}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-2 text-[11px] focus:ring-2 focus:ring-indigo-500 outline-none"
-                  aria-label="Select native language"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
                 >
                   {SUPPORTED_LANGUAGES.map((l) => (
                     <option key={l.code} value={l.code}>
@@ -531,162 +361,241 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Modes: remaining space */}
-          <div className="flex-1 min-w-0 space-y-2">
+          {/* Mode buttons */}
+          <div className="space-y-2">
             <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Mode</div>
-            {/* In mobile it still fits (3 buttons in a row); if too tight, they wrap */}
-            <div className="flex flex-wrap gap-2">
-              {SCENARIOS.map((s) => {
-                const active = (selectedScenario as any).id === (s as any).id;
-                return (
-                  <button
-                    key={(s as any).id}
-                    onClick={() => setSelectedScenario(s)}
-                    disabled={status !== ConnectionStatus.DISCONNECTED}
-                    className={[
-                      'flex-1 min-w-[140px]',
-                      'px-3 py-3 rounded-xl border text-left transition',
-                      active ? 'bg-indigo-600/20 border-indigo-500' : 'bg-slate-900/40 border-white/10 hover:bg-slate-800/60',
-                    ].join(' ')}
-                    aria-label={`Select mode ${(s as any).title}`}
-                  >
-                    <div className="text-[11px] font-black leading-4">{(s as any).title}</div>
-                    <div className="text-[10px] text-slate-500 leading-4 line-clamp-1">{(s as any).description}</div>
-                  </button>
-                );
-              })}
+            <div className="space-y-2">
+              {SCENARIOS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setSelectedScenario(s)}
+                  disabled={status !== ConnectionStatus.DISCONNECTED}
+                  className={`w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all ${
+                    selectedScenario.id === s.id
+                      ? 'bg-indigo-600/20 border-indigo-500'
+                      : 'bg-slate-800/40 border-transparent hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="text-xl">{(s as any).icon}</span>
+                  <div>
+                    <div className="font-bold text-xs">{s.title}</div>
+                    <div className="text-[9px] text-slate-500">{s.description}</div>
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
-        </div>
 
-        {/* Transcript */}
-        <div className="flex-1 min-h-0 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
-              <MessageSquare size={12} /> Live Transcript
-            </label>
-            <span className="text-[10px] text-slate-600">{transcript.length ? `${transcript.length}` : ''}</span>
+          {/* Transcript: NO title, NO placeholder text */}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <div ref={scrollRef} className="h-full overflow-y-auto space-y-1 pr-2">
+              {transcript.map((entry, i) => (
+                <TranscriptItem key={i} entry={entry} />
+              ))}
+            </div>
           </div>
 
-          <div
-            ref={scrollRef}
-            className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-2 scroll-smooth scrollbar-thin scrollbar-thumb-slate-700"
-            aria-label="Live transcript"
-          >
-            {transcript.length === 0 ? (
-              <div className="text-[10px] text-slate-600 italic mt-4 text-center">
-                Your conversation will appear here...
-              </div>
-            ) : (
-              transcript.map((entry, i) => <TranscriptItem key={i} entry={entry} />)
-            )}
+          {/* Footer */}
+          <div className="pt-2 text-[10px] text-slate-500 flex items-center justify-between">
+            <span>© 2025 LingoLive</span>
+            <div className="flex items-center gap-3">
+              <a href="/privacy" className="hover:text-slate-300">
+                Privacy
+              </a>
+              <a href="/terms" className="hover:text-slate-300">
+                Terms
+              </a>
+              <a href={`mailto:${CONTACT_EMAIL}?subject=LingoLive%20Contact`} className="hover:text-slate-300">
+                Contact
+              </a>
+            </div>
           </div>
-        </div>
+        </aside>
 
-        {/* Left footer: "2025 LINGOLIVE" line */}
-        <LeftFooter />
-      </aside>
-
-      {/* RIGHT / MAIN */}
-      <main className="flex-1 h-full overflow-hidden flex flex-col">
-        {/* Top status pill */}
-        <div className="p-4 md:p-6">
-          <div className="ml-auto w-fit flex items-center gap-3 bg-slate-900/70 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
+        {/* Main center (always visible on mobile + desktop) */}
+        <main className="flex-1 h-full overflow-hidden flex flex-col items-center justify-center p-5 md:p-10 relative">
+          {/* Status pill */}
+          <div className="absolute top-4 right-4 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
             <AudioVisualizer isActive={status === ConnectionStatus.CONNECTED && !isSpeaking && !isMuted} color="#10b981" />
             <div
-              className={[
-                'w-2 h-2 rounded-full',
-                status === ConnectionStatus.CONNECTED ? 'bg-green-500 animate-pulse' : 'bg-slate-700',
-              ].join(' ')}
+              className={`w-2 h-2 rounded-full ${
+                status === ConnectionStatus.CONNECTED ? 'bg-green-500 animate-pulse' : 'bg-slate-700'
+              }`}
             />
             <span className="text-[10px] font-black tracking-widest uppercase">{status}</span>
           </div>
-        </div>
 
-        {/* Center content: Always visible avatar on mobile */}
-        <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-4 md:px-10 pb-2 overflow-hidden">
-          <div className="w-full max-w-2xl flex flex-col items-center justify-center gap-5 md:gap-6 text-center">
-            {/* START button must be ABOVE avatar */}
+          {/* START button ALWAYS on top */}
+          <div className="w-full max-w-xl flex flex-col items-center gap-4">
+            {error && (
+              <div className="text-red-400 text-xs font-bold bg-red-400/10 px-4 py-2 rounded-lg border border-red-400/20 flex items-center gap-2">
+                <AlertCircle size={14} /> {error}
+              </div>
+            )}
+
             {status === ConnectionStatus.CONNECTED ? (
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setIsMuted((v) => !v)}
-                  title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
-                  className={[
-                    'p-4 rounded-2xl border transition shadow-xl',
-                    isMuted ? 'bg-red-500/80 border-red-400' : 'bg-slate-900/40 border-white/10 hover:bg-slate-800/60',
-                  ].join(' ')}
-                  aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                  onClick={() => setIsMuted((m) => !m)}
+                  className={`px-5 py-3 rounded-2xl border font-black flex items-center gap-2 ${
+                    isMuted ? 'bg-red-500/20 border-red-400/40' : 'bg-slate-900/60 border-white/10'
+                  }`}
                 >
-                  {isMuted ? <MicOff /> : <Mic />}
+                  {isMuted ? <MicOff size={18} /> : <Mic size={18} />}
+                  {isMuted ? 'Mic muted' : 'Mic on'}
                 </button>
 
                 <button
                   onClick={stopConversation}
-                  className="bg-red-600 px-8 py-4 rounded-2xl font-black flex items-center gap-3 hover:bg-red-700 transition-colors shadow-2xl shadow-red-900/20"
-                  aria-label="Exit"
+                  className="px-5 py-3 rounded-2xl bg-red-600 hover:bg-red-700 font-black flex items-center gap-2"
                 >
-                  <LogOut /> EXIT
+                  <LogOut size={18} /> Exit
                 </button>
               </div>
             ) : (
               <button
                 onClick={startConversation}
                 disabled={status === ConnectionStatus.CONNECTING}
-                className="bg-indigo-600 px-10 md:px-14 py-4 md:py-5 rounded-2xl font-black flex items-center gap-3 text-base md:text-lg shadow-2xl shadow-indigo-900/40 hover:bg-indigo-500 transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                aria-label="Start live session"
+                className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed px-6 py-4 rounded-2xl font-black flex items-center justify-center gap-3 text-base md:text-lg shadow-2xl shadow-indigo-900/40"
               >
-                <Mic size={22} /> {status === ConnectionStatus.CONNECTING ? 'CONNECTING...' : 'START LIVE SESSION'}
+                <Mic size={22} />
+                {status === ConnectionStatus.CONNECTING ? 'CONNECTING...' : 'START LIVE SESSION'}
               </button>
             )}
 
-            {/* Avatar 20% smaller */}
-            <div className="scale-[0.8] md:scale-[0.8] origin-top">
+            {/* Avatar (20% smaller than before) */}
+            <div className="scale-[0.8] origin-top">
               <Avatar
                 state={
-                  status !== ConnectionStatus.CONNECTED
-                    ? 'idle'
-                    : isSpeaking
-                    ? 'speaking'
-                    : isMuted
-                    ? 'thinking'
-                    : 'listening'
+                  status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'
                 }
               />
             </div>
 
-            <div className="space-y-2 -mt-2">
-              <h2 className="text-2xl md:text-4xl font-black text-white tracking-tight">
-                {status === ConnectionStatus.CONNECTED
-                  ? isSpeaking
-                    ? 'Gemini is speaking'
-                    : 'Listening...'
-                  : (selectedScenario as any).title}
-              </h2>
-              <p className="text-slate-500 text-sm max-w-md mx-auto">
-                {(selectedScenario as any).description}
-              </p>
+            <div className="text-center">
+              <div className="text-2xl md:text-4xl font-black text-white">
+                {status === ConnectionStatus.CONNECTED ? (isSpeaking ? 'Gemini is speaking' : 'Listening...') : selectedScenario.title}
+              </div>
+              <div className="text-slate-500 text-sm mt-1">{selectedScenario.description}</div>
             </div>
 
-            {(isSpeaking || (status === ConnectionStatus.CONNECTED && !isMuted)) && (
-              <div className="h-10 flex items-center justify-center">
-                <AudioVisualizer isActive={true} color={isSpeaking ? '#6366f1' : '#10b981'} />
-              </div>
-            )}
+            {/* Mobile footer links (bottom) */}
+            <div className="md:hidden fixed bottom-3 left-0 right-0 flex items-center justify-center gap-4 text-[11px] text-slate-400">
+              <a href="/privacy" className="hover:text-slate-200">
+                Privacy
+              </a>
+              <a href="/terms" className="hover:text-slate-200">
+                Terms
+              </a>
+              <a href={`mailto:${CONTACT_EMAIL}?subject=LingoLive%20Contact`} className="hover:text-slate-200">
+                Contact
+              </a>
+            </div>
+          </div>
+        </main>
+      </div>
 
-            {error && (
-              <div className="text-red-400 text-xs font-bold bg-red-400/10 px-4 py-2 rounded-lg border border-red-400/20 flex items-center gap-2">
-                <AlertCircle size={14} /> {error}
+      {/* Mobile Panel (Languages + Mode + Transcript) */}
+      {isPanelOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" onClick={() => setIsPanelOpen(false)}>
+          <div
+            className="absolute left-0 top-0 bottom-0 w-[86%] max-w-sm bg-slate-900 border-r border-white/10 p-4 flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="font-black">Menu</div>
+              <button
+                onClick={() => setIsPanelOpen(false)}
+                className="p-2 rounded-xl border border-white/10 bg-slate-950/40"
+                aria-label="Close menu"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Languages */}
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Languages</div>
+              <div className="p-3 bg-slate-800/40 rounded-2xl border border-white/5 space-y-3">
+                <div className="space-y-1">
+                  <div className="text-[10px] text-slate-400">Learn</div>
+                  <select
+                    value={targetLang.code}
+                    onChange={(e) => setTargetLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
+                    disabled={status !== ConnectionStatus.DISCONNECTED}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                  >
+                    {SUPPORTED_LANGUAGES.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.flag} {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="text-[10px] text-slate-400">Native</div>
+                  <select
+                    value={nativeLang.code}
+                    onChange={(e) => setNativeLang(SUPPORTED_LANGUAGES.find((l) => l.code === e.target.value)!)}
+                    disabled={status !== ConnectionStatus.DISCONNECTED}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                  >
+                    {SUPPORTED_LANGUAGES.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.flag} {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            )}
+            </div>
+
+            {/* Mode */}
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Mode</div>
+              <div className="space-y-2">
+                {SCENARIOS.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setSelectedScenario(s)}
+                    disabled={status !== ConnectionStatus.DISCONNECTED}
+                    className={`w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all ${
+                      selectedScenario.id === s.id
+                        ? 'bg-indigo-600/20 border-indigo-500'
+                        : 'bg-slate-800/40 border-transparent hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="text-xl">{(s as any).icon}</span>
+                    <div>
+                      <div className="font-bold text-xs">{s.title}</div>
+                      <div className="text-[9px] text-slate-500">{s.description}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Transcript: no label, no placeholder */}
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <div ref={scrollRef} className="h-full overflow-y-auto space-y-1 pr-2">
+                {transcript.map((entry, i) => (
+                  <TranscriptItem key={i} entry={entry} />
+                ))}
+              </div>
+            </div>
+
+            <div className="text-[10px] text-slate-500 flex items-center justify-between pt-2">
+              <span>© 2025</span>
+              <a href={`mailto:${CONTACT_EMAIL}?subject=LingoLive%20Contact`} className="hover:text-slate-200">
+                Contact
+              </a>
+            </div>
           </div>
         </div>
+      )}
 
-        {/* Bottom footer (right side): links + SETTINGS icon moved here */}
-        <RightFooter />
-      </main>
-
-      {/* SETTINGS MODAL */}
+      {/* Settings Modal */}
       {isSettingsOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
@@ -704,7 +613,6 @@ const App: React.FC = () => {
                 <Accessibility />
                 <h3 className="text-lg font-black">Settings</h3>
               </div>
-
               <button
                 className="p-2 rounded-xl hover:bg-white/5 border border-white/10"
                 onClick={() => setIsSettingsOpen(false)}
@@ -724,21 +632,13 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div className="text-xs text-slate-300">Text size</div>
                   <div className="flex items-center gap-2">
-                    <button
-                      className="p-2 rounded-xl border border-white/10 hover:bg-white/5"
-                      onClick={decFont}
-                      aria-label="Decrease text size"
-                    >
+                    <button className="p-2 rounded-xl border border-white/10 hover:bg-white/5" onClick={decFont}>
                       <Minus size={16} />
                     </button>
                     <div className="text-xs font-black w-16 text-center">
                       {a11y.fontScale === 1 ? '100%' : a11y.fontScale === 1.15 ? '115%' : '130%'}
                     </div>
-                    <button
-                      className="p-2 rounded-xl border border-white/10 hover:bg-white/5"
-                      onClick={incFont}
-                      aria-label="Increase text size"
-                    >
+                    <button className="p-2 rounded-xl border border-white/10 hover:bg-white/5" onClick={incFont}>
                       <Plus size={16} />
                     </button>
                   </div>
@@ -753,7 +653,6 @@ const App: React.FC = () => {
                     checked={a11y.highContrast}
                     onChange={(e) => setA11y((p) => ({ ...p, highContrast: e.target.checked }))}
                     className="h-4 w-4"
-                    aria-label="Toggle high contrast"
                   />
                 </label>
 
@@ -764,7 +663,6 @@ const App: React.FC = () => {
                     checked={a11y.reduceMotion}
                     onChange={(e) => setA11y((p) => ({ ...p, reduceMotion: e.target.checked }))}
                     className="h-4 w-4"
-                    aria-label="Toggle reduce motion"
                   />
                 </label>
 
@@ -775,7 +673,6 @@ const App: React.FC = () => {
                     checked={a11y.focusRing}
                     onChange={(e) => setA11y((p) => ({ ...p, focusRing: e.target.checked }))}
                     className="h-4 w-4"
-                    aria-label="Toggle focus outline"
                   />
                 </label>
               </div>
@@ -783,26 +680,18 @@ const App: React.FC = () => {
               <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/10">
                 <div className="font-black text-sm mb-2">Links</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <button
-                    onClick={() => {
-                      setIsSettingsOpen(false);
-                      go('/privacy');
-                    }}
+                  <a
+                    href="/privacy"
                     className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10"
                   >
                     Privacy
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setIsSettingsOpen(false);
-                      go('/terms');
-                    }}
+                  </a>
+                  <a
+                    href="/terms"
                     className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10"
                   >
                     Terms
-                  </button>
-
+                  </a>
                   <a
                     href={`mailto:${CONTACT_EMAIL}?subject=LingoLive%20Contact`}
                     className="text-center text-xs font-black px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-white/10"
@@ -811,15 +700,15 @@ const App: React.FC = () => {
                   </a>
                 </div>
               </div>
-            </div>
 
-            <div className="mt-5 flex justify-end">
-              <button
-                onClick={() => setIsSettingsOpen(false)}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-black text-xs"
-              >
-                Done
-              </button>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-black text-xs"
+                >
+                  Done
+                </button>
+              </div>
             </div>
           </div>
         </div>
