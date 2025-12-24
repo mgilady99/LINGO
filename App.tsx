@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleGenAI, LiveServerMessage } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import {
   Mic,
   MicOff,
@@ -80,7 +80,7 @@ const App: React.FC = () => {
 
   const [page, setPage] = useState<PageView>('main');
 
-  // DEBUG: להבין למה זה נסגר במובייל
+  // DEBUG: להבין למה זה נסגר
   const [lastEvent, setLastEvent] = useState<string>('—');
 
   const inputAudioContextRef = useRef<AudioContext | null>(null);
@@ -158,7 +158,7 @@ const App: React.FC = () => {
 
   const safeErr = (e: any) => {
     const msg = e?.message ? String(e.message) : String(e);
-    return msg.length > 260 ? msg.slice(0, 260) + '…' : msg;
+    return msg.length > 500 ? msg.slice(0, 500) + '…' : msg;
   };
 
   const startConversation = useCallback(async () => {
@@ -178,19 +178,15 @@ const App: React.FC = () => {
     setStatus(ConnectionStatus.CONNECTING);
 
     try {
-      // חשוב במובייל: חייב להיות אחרי לחיצה (user gesture)
+      // חשוב: חייב להיות אחרי לחיצה במובייל
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
 
       if (!inputAudioContextRef.current) inputAudioContextRef.current = new AudioContext({ sampleRate: 16000 });
       if (!outputAudioContextRef.current) outputAudioContextRef.current = new AudioContext({ sampleRate: 24000 });
 
-      try {
-        await inputAudioContextRef.current.resume();
-      } catch {}
-      try {
-        await outputAudioContextRef.current.resume();
-      } catch {}
+      try { await inputAudioContextRef.current.resume(); } catch {}
+      try { await outputAudioContextRef.current.resume(); } catch {}
 
       const ai = new GoogleGenAI({ apiKey });
 
@@ -199,8 +195,6 @@ const App: React.FC = () => {
         ? `You are a professional real-time translator. Translate ${nativeLang.name} to ${targetLang.name} and vice versa. Speak ONLY the translation.`
         : `You are a patient and friendly ${targetLang.name} tutor. User's native language is ${nativeLang.name}. Scenario: ${(selectedScenario as any).title}. Correct errors gently and keep the conversation flowing.`;
 
-      // 🔴 אם המודל לא נכון במובייל — הסשן יסגר מיד.
-      // אתה יכול גם להגדיר ב-Cloudflare משתנה: VITE_GEMINI_MODEL
       const MODEL_NAME = (import.meta as any).env?.VITE_GEMINI_MODEL || 'gemini-2.0-flash-live-001';
 
       const session = await ai.live.connect({
@@ -237,9 +231,7 @@ const App: React.FC = () => {
             try {
               if (m.serverContent?.interrupted) {
                 sourcesRef.current.forEach((src) => {
-                  try {
-                    src.stop();
-                  } catch {}
+                  try { src.stop(); } catch {}
                 });
                 sourcesRef.current.clear();
                 nextStartTimeRef.current = 0;
@@ -280,9 +272,7 @@ const App: React.FC = () => {
                 try {
                   const pcm = decode(part.inlineData.data);
                   const outputCtx = outputAudioContextRef.current!;
-                  try {
-                    await outputCtx.resume();
-                  } catch {}
+                  try { await outputCtx.resume(); } catch {}
 
                   const audioBuffer = await decodeAudioData(outputCtx, pcm);
 
@@ -315,8 +305,11 @@ const App: React.FC = () => {
             }
           },
 
-          onclose: () => {
-            setLastEvent('CLOSE ❌ (server closed)');
+          // ✅ נוסיף מידע אם מגיע event
+          onclose: (evt?: any) => {
+            const code = evt?.code ? ` code=${evt.code}` : '';
+            const reason = evt?.reason ? ` reason=${evt.reason}` : '';
+            setLastEvent(`CLOSE ❌ (server closed)${code}${reason}`);
             setIsSpeaking(false);
             setStatus(ConnectionStatus.DISCONNECTED);
           },
@@ -330,9 +323,10 @@ const App: React.FC = () => {
           },
         },
 
+        // ✅ FIX: חייב להיות Modality.AUDIO ולא "AUDIO"
         config: {
           systemInstruction,
-          responseModalities: ['AUDIO'],
+          responseModalities: [Modality.AUDIO],
         } as any,
       });
 
@@ -478,7 +472,7 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Footer moved DOWN so it won't hide START */}
+          {/* Footer */}
           <div className="mt-2 pt-3 border-t border-white/5 flex flex-col gap-2">
             <div className="text-[10px] text-slate-500 text-center">Last event: {lastEvent}</div>
             <div className="flex items-center justify-between text-[11px] text-slate-500">
@@ -497,7 +491,6 @@ const App: React.FC = () => {
 
         {/* Main */}
         <main className="flex-1 flex flex-col">
-          {/* ✅ allow a LITTLE scroll on mobile so nothing is cut */}
           <div className="flex-1 overflow-y-auto md:overflow-hidden px-4 md:px-8 py-4 md:py-8">
             <div className="relative w-full h-full flex flex-col items-center justify-start md:justify-center gap-4 md:gap-6">
               <div className="absolute top-4 right-4 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
@@ -506,7 +499,6 @@ const App: React.FC = () => {
                 <span className="text-[10px] font-black tracking-widest uppercase">{status}</span>
               </div>
 
-              {/* ✅ START always visible (top) */}
               {status === ConnectionStatus.CONNECTED ? (
                 <div className="w-full max-w-xl flex items-center justify-center gap-3 mt-12 md:mt-0">
                   <button
@@ -539,7 +531,6 @@ const App: React.FC = () => {
                 </button>
               )}
 
-              {/* Avatar (visible on mobile) */}
               <div className="scale-[0.8] md:scale-100 origin-top">
                 <Avatar state={status !== ConnectionStatus.CONNECTED ? 'idle' : isSpeaking ? 'speaking' : isMuted ? 'thinking' : 'listening'} />
               </div>
@@ -561,7 +552,6 @@ const App: React.FC = () => {
                 </div>
               )}
 
-              {/* Bottom padding for safe-area so nothing gets hidden */}
               <div className="pb-[calc(env(safe-area-inset-bottom)+18px)]" />
               <FooterLinks />
             </div>
